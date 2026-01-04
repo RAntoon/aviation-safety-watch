@@ -21,16 +21,16 @@ type AirportsResponse = {
 function colorForStatus(status: Airport["status"]) {
   switch (status) {
     case "delay":
-      return "#f59e0b"; // amber
+      return "#f59e0b";
     case "ground_stop":
-      return "#ef4444"; // red
+      return "#ef4444";
     default:
-      return "#22c55e"; // green
+      return "#22c55e";
   }
 }
 
 export default function MapView() {
-  const center = useMemo<LatLngExpression>(() => [39.5, -98.35], []); // Continental US
+  const center = useMemo<LatLngExpression>(() => [39.5, -98.35], []);
   const [data, setData] = useState<AirportsResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -49,7 +49,7 @@ export default function MapView() {
     }
 
     load();
-    const t = setInterval(load, 60_000); // refresh every minute
+    const t = setInterval(load, 60_000);
     return () => {
       cancelled = true;
       clearInterval(t);
@@ -58,16 +58,57 @@ export default function MapView() {
 
   return (
     <div style={{ height: "100vh", width: "100vw" }}>
-      {/* simple status header */}
       <div style={{ position: "absolute", zIndex: 1000, padding: 12 }}>
-        <div style={{ background: "white", padding: 10, borderRadius: 8, boxShadow: "0 2px 12px rgba(0,0,0,0.12)" }}>
+        <div
+          style={{
+            background: "white",
+            padding: 10,
+            borderRadius: 8,
+            boxShadow: "0 2px 12px rgba(0,0,0,0.12)",
+          }}
+        >
           <div style={{ fontWeight: 700 }}>Aviation Safety Watch</div>
           <div style={{ fontSize: 12, opacity: 0.8 }}>
-            {err ? `Error: ${err}` : data ? `Updated: ${new Date(data.updatedAt).toLocaleString()}` : "Loading..."}
+            {err
+              ? `Error: ${err}`
+              : data
+              ? `Updated: ${new Date(data.updatedAt).toLocaleString()}`
+              : "Loading..."}
           </div>
         </div>
       </div>
 
-      <MapContainer center={center} zoom={4} scrollWheelZoom={true} style={{ height: "100%", width: "100%" }}>
+      <MapContainer
+        center={center}
+        zoom={4}
+        scrollWheelZoom={true}
+        style={{ height: "100%", width: "100%" }}
+      >
         <TileLayer
-          attribution='&copy; OpenStreetMap
+          attribution="&copy; OpenStreetMap contributors"
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        />
+
+        {(data?.airports ?? []).map((a) => (
+          <CircleMarker
+            key={a.code}
+            center={[a.lat, a.lon]}
+            radius={8}
+            pathOptions={{ color: colorForStatus(a.status), fillOpacity: 0.8 }}
+          >
+            <Popup>
+              <div style={{ fontWeight: 700 }}>
+                {a.code} — {a.name}
+              </div>
+              <div>Status: {a.status}</div>
+              {a.note ? <div>Note: {a.note}</div> : null}
+              <div style={{ fontSize: 12, opacity: 0.7 }}>
+                {a.lat}, {a.lon}
+              </div>
+            </Popup>
+          </CircleMarker>
+        ))}
+      </MapContainer>
+    </div>
+  );
+}
