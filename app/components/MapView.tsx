@@ -1,13 +1,16 @@
 "use client";
 
+import { MapContainer, TileLayer, CircleMarker, Popup } from "react-leaflet";
+import "leaflet/dist/leaflet.css";
 import { useEffect, useState } from "react";
 
 type Airport = {
-  id: string;
+  code: string;
   name: string;
   lat: number;
   lon: number;
-  category: string;
+  status: string;
+  note?: string;
 };
 
 export default function MapView() {
@@ -16,32 +19,49 @@ export default function MapView() {
 
   useEffect(() => {
     async function loadAirports() {
-      try {
-        const res = await fetch("/api/airports");
-        const data = await res.json();
-        setAirports(data);
-      } catch (err) {
-        console.error("Failed to load airports", err);
-      } finally {
-        setLoading(false);
-      }
+      const res = await fetch("/api/airports");
+      const data = await res.json();
+      setAirports(data.airports);
+      setLoading(false);
     }
-
     loadAirports();
   }, []);
 
-  if (loading) {
-    return <p>Loading map data…</p>;
-  }
+  if (loading) return <p>Loading map…</p>;
 
   return (
-    <div>
-      <h1>Map placeholder</h1>
-      <p>If you see this, MapView is rendering correctly.</p>
+    <MapContainer
+      center={[39.5, -98.35]} // continental US
+      zoom={4}
+      style={{ height: "90vh", width: "100%" }}
+    >
+      <TileLayer
+        attribution="&copy; OpenStreetMap contributors"
+        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+      />
 
-      <pre style={{ marginTop: 20 }}>
-        {JSON.stringify(airports, null, 2)}
-      </pre>
-    </div>
+      {airports.map((airport) => (
+        <CircleMarker
+          key={airport.code}
+          center={[airport.lat, airport.lon]}
+          radius={8}
+          pathOptions={{
+            color:
+              airport.status === "normal"
+                ? "green"
+                : airport.status === "delay"
+                ? "orange"
+                : "red",
+          }}
+        >
+          <Popup>
+            <strong>{airport.code}</strong><br />
+            {airport.name}<br />
+            Status: {airport.status}<br />
+            {airport.note && <em>{airport.note}</em>}
+          </Popup>
+        </CircleMarker>
+      ))}
+    </MapContainer>
   );
 }
