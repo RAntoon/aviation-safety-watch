@@ -1,60 +1,56 @@
 import { NextResponse } from "next/server";
 
-export const runtime = "nodejs"; // keep it server-side
+export const dynamic = "force-dynamic";
 
-// IMPORTANT:
-// 1) In the NTSB Swagger page, open **GetCasesByDateRange**
-// 2) Click "Try this operation", enter dates, execute
-// 3) Copy the **Request URL** it calls
-// 4) Put the BASE part into NTSB_CASES_BY_DATE_BASE (see Step 3)
+function isISODate(s: string) {
+  // YYYY-MM-DD
+  return /^\d{4}-\d{2}-\d{2}$/.test(s);
+}
 
 export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url);
-  const start = searchParams.get("start");
-  const end = searchParams.get("end");
-
-  if (!start || !end) {
-    return NextResponse.json({ error: "Missing start or end" }, { status: 400 });
-  }
-
-  const base = process.env.NTSB_CASES_BY_DATE_BASE;
-  if (!base) {
-    return NextResponse.json(
-      { error: "Server misconfigured: missing NTSB_CASES_BY_DATE_BASE" },
-      { status: 500 }
-    );
-  }
-
-  // You may need to adjust parameter names to EXACTLY what Swagger uses.
-  // Common patterns: ?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD  OR  ?start=...&end=...
-  const url = new URL(base);
-  url.searchParams.set("startDate", start);
-  url.searchParams.set("endDate", end);
-
   try {
-    const r = await fetch(url.toString(), {
-      method: "GET",
-      headers: { accept: "application/json" },
-      cache: "no-store",
-    });
+    const { searchParams } = new URL(req.url);
+    const start = searchParams.get("start");
+    const end = searchParams.get("end");
 
-    const text = await r.text();
-    let json: any = null;
-    try {
-      json = JSON.parse(text);
-    } catch {
-      // not JSON
-    }
-
-    if (!r.ok) {
+    if (!start || !end || !isISODate(start) || !isISODate(end)) {
       return NextResponse.json(
-        { error: json?.message || json?.error || text || `HTTP ${r.status}` },
-        { status: r.status }
+        { error: "Missing/invalid start or end. Use YYYY-MM-DD." },
+        { status: 400 }
       );
     }
 
-    return NextResponse.json(json ?? { raw: text }, { status: 200 });
+    // NTSB Public API (Aviation)
+    // If their parameter names differ, you’ll see it immediately in the response error.
+    const upstream = `https://api.ntsb.gov/public/api/Aviation/v1/GetCasesByDateRange?startDate=${encodeURIComponent(
+      start
+    )}&endDate=${encodeURIComponent(end)}`;
+
+    const r = await fetch(upstream, {
+      // avoid caching stale results
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    const text = await r.text();
+
+    // If NTSB returns non-JSON (it happens during outages), pass it through clearly
+    const contentType = r.headers.get("content-type") || "";
+    if (!contentType.includes("application/json")) {
+      return NextResponse.json(
+        { error: "Upstream returned non-JSON", status: r.status, body: text },
+        { status: 502 }
+      );
+    }
+
+    const json = JSON.parse(text);
+    return NextResponse.json(json, { status: 200 });
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message || String(e) }, { status: 500 });
+    return NextResponse.json(
+      { error: "Server error", detail: String(e?.message || e) },
+      { status: 500 }
+    );
   }
 }
