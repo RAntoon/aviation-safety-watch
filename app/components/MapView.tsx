@@ -1,86 +1,73 @@
 "use client";
 
-import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
+import { useEffect, useMemo, useState } from "react";
+import type { LatLngExpression } from "leaflet";
+import { MapContainer, TileLayer, CircleMarker, Popup } from "react-leaflet";
 
-// Fix Leaflet marker icons in Next.js
-delete (L.Icon.Default.prototype as any)._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl:
-    "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
-  iconUrl:
-    "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
-  shadowUrl:
-    "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-});
+type Airport = {
+  code: string;
+  name: string;
+  lat: number;
+  lon: number;
+  status: "normal" | "delay" | "ground_stop";
+  note?: string;
+};
+
+type AirportsResponse = {
+  updatedAt: string;
+  airports: Airport[];
+};
+
+function colorForStatus(status: Airport["status"]) {
+  switch (status) {
+    case "delay":
+      return "#f59e0b"; // amber
+    case "ground_stop":
+      return "#ef4444"; // red
+    default:
+      return "#22c55e"; // green
+  }
+}
 
 export default function MapView() {
-  // TEMP static data (we’ll replace with API fetch next)
-  const airports = [
-    {
-      code: "LAX",
-      name: "Los Angeles Intl",
-      lat: 33.9416,
-      lon: -118.4085,
-      status: "normal",
-    },
-    {
-      code: "SFO",
-      name: "San Francisco Intl",
-      lat: 37.6213,
-      lon: -122.379,
-      status: "delay",
-      note: "Sample delay",
-    },
-    {
-      code: "JFK",
-      name: "John F. Kennedy Intl",
-      lat: 40.6413,
-      lon: -73.7781,
-      status: "normal",
-    },
-    {
-      code: "ORD",
-      name: "Chicago O'Hare Intl",
-      lat: 41.9742,
-      lon: -87.9073,
-      status: "ground_stop",
-      note: "Sample ground stop",
-    },
-  ];
+  const center = useMemo<LatLngExpression>(() => [39.5, -98.35], []); // Continental US
+  const [data, setData] = useState<AirportsResponse | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      try {
+        const res = await fetch("/api/airports", { cache: "no-store" });
+        if (!res.ok) throw new Error(`API error: ${res.status}`);
+        const json = (await res.json()) as AirportsResponse;
+        if (!cancelled) setData(json);
+      } catch (e: any) {
+        if (!cancelled) setErr(e?.message ?? "Unknown error");
+      }
+    }
+
+    load();
+    const t = setInterval(load, 60_000); // refresh every minute
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, []);
 
   return (
     <div style={{ height: "100vh", width: "100vw" }}>
-      <MapContainer
-        center={[39.5, -98.35]} // Continental US
-        zoom={4}
-        scrollWheelZoom={true}
-        style={{ height: "100%", width: "100%" }}
-      >
-        <TileLayer
-          attribution='&copy; OpenStreetMap contributors'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        />
+      {/* simple status header */}
+      <div style={{ position: "absolute", zIndex: 1000, padding: 12 }}>
+        <div style={{ background: "white", padding: 10, borderRadius: 8, boxShadow: "0 2px 12px rgba(0,0,0,0.12)" }}>
+          <div style={{ fontWeight: 700 }}>Aviation Safety Watch</div>
+          <div style={{ fontSize: 12, opacity: 0.8 }}>
+            {err ? `Error: ${err}` : data ? `Updated: ${new Date(data.updatedAt).toLocaleString()}` : "Loading..."}
+          </div>
+        </div>
+      </div>
 
-        {airports.map((a) => (
-          <Marker key={a.code} position={[a.lat, a.lon]}>
-            <Popup>
-              <strong>{a.code}</strong>
-              <br />
-              {a.name}
-              <br />
-              Status: {a.status}
-              {a.note && (
-                <>
-                  <br />
-                  Note: {a.note}
-                </>
-              )}
-            </Popup>
-          </Marker>
-        ))}
-      </MapContainer>
-    </div>
-  );
-}
+      <MapContainer center={center} zoom={4} scrollWheelZoom={true} style={{ height: "100%", width: "100%" }}>
+        <TileLayer
+          attribution='&copy; OpenStreetMap
