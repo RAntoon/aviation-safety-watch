@@ -1,55 +1,42 @@
 import { NextResponse } from "next/server";
 
-export const dynamic = "force-dynamic";
-
-function isISODate(s: string) {
-  // YYYY-MM-DD
-  return /^\d{4}-\d{2}-\d{2}$/.test(s);
-}
-
 export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+
+  const start = searchParams.get("start");
+  const end = searchParams.get("end");
+
+  if (!start || !end) {
+    return NextResponse.json(
+      { error: "Missing start or end date" },
+      { status: 400 }
+    );
+  }
+
+  const url =
+    "https://api.ntsb.gov/public/api/Aviation/v1/GetCasesByDateRange" +
+    `?startDate=${start}&endDate=${end}`;
+
   try {
-    const { searchParams } = new URL(req.url);
-    const start = searchParams.get("start");
-    const end = searchParams.get("end");
-
-    if (!start || !end || !isISODate(start) || !isISODate(end)) {
-      return NextResponse.json(
-        { error: "Missing/invalid start or end. Use YYYY-MM-DD." },
-        { status: 400 }
-      );
-    }
-
-    // NTSB Public API (Aviation)
-    // If their parameter names differ, you’ll see it immediately in the response error.
-    const upstream = `https://api.ntsb.gov/public/api/Aviation/v1/GetCasesByDateRange?startDate=${encodeURIComponent(
-      start
-    )}&endDate=${encodeURIComponent(end)}`;
-
-    const r = await fetch(upstream, {
-      // avoid caching stale results
-      cache: "no-store",
+    const r = await fetch(url, {
       headers: {
         Accept: "application/json",
       },
+      cache: "no-store",
     });
 
-    const text = await r.text();
-
-    // If NTSB returns non-JSON (it happens during outages), pass it through clearly
-    const contentType = r.headers.get("content-type") || "";
-    if (!contentType.includes("application/json")) {
+    if (!r.ok) {
       return NextResponse.json(
-        { error: "Upstream returned non-JSON", status: r.status, body: text },
-        { status: 502 }
+        { error: "NTSB API error", status: r.status },
+        { status: 500 }
       );
     }
 
-    const json = JSON.parse(text);
-    return NextResponse.json(json, { status: 200 });
-  } catch (e: any) {
+    const data = await r.json();
+    return NextResponse.json(data);
+  } catch (err: any) {
     return NextResponse.json(
-      { error: "Server error", detail: String(e?.message || e) },
+      { error: err?.message ?? "Fetch failed" },
       { status: 500 }
     );
   }
