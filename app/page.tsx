@@ -1,7 +1,9 @@
-import dynamic from "next/dynamic";
+import MapView from "./components/MapView";
 
-const MapView = dynamic(() => import("./components/MapView"), { ssr: false });
-
-export default function Page() {
-  return <MapView />;
+export default function HomePage() {
+  return (
+    <main style={{ width: "100vw", height: "100vh" }}>
+      <MapView />
+    </main>
+  );
 }
