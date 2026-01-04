@@ -1,2 +1,2 @@
 # aviation-safety-watch
-Live US aviation safety events
+Live US Aviation Safety Events
