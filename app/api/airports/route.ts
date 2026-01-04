@@ -1,125 +1,118 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
-type AirportStatus = {
-  code: string;
-  name?: string;
-  status: "normal" | "delay" | "ground_stop" | "unknown";
-  note?: string;
-  raw?: any;
+export const runtime = "nodejs"; // IMPORTANT: avoid Edge fetch quirks
+export const dynamic = "force-dynamic";
+
+type AirportSeed = {
+  code: string; // IATA
+  name: string;
+  lat: number;
+  lon: number;
 };
 
-function parseAswsXml(xml: string): Partial<AirportStatus> {
-  // Very lightweight XML parsing without extra dependencies.
-  // ASWS commonly includes tags like: <Name>, <Delay>, <AvgDelay>, <Reason>, <GroundStop>
-  const get = (tag: string) => {
-    const m = xml.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, "i"));
-    return m?.[1]?.trim();
-  };
+const AIRPORTS: AirportSeed[] = [
+  { code: "LAX", name: "Los Angeles Intl", lat: 33.9416, lon: -118.4085 },
+  { code: "SFO", name: "San Francisco Intl", lat: 37.6213, lon: -122.3790 },
+  { code: "JFK", name: "John F. Kennedy Intl", lat: 40.6413, lon: -73.7781 },
+  { code: "ORD", name: "Chicago O'Hare Intl", lat: 41.9742, lon: -87.9073 },
+];
 
-  const name = get("Name");
-  const delay = (get("Delay") || "").toLowerCase() === "true";
-  const groundStop = (get("GroundStop") || "").toLowerCase() === "true";
-  const reason = get("Reason");
-  const avgDelay = get("AvgDelay");
+async function fetchFaaAirportStatus(iata: string) {
+  const url = `https://soa.smext.faa.gov/asws/api/airport/status/${encodeURIComponent(
+    iata
+  )}`;
 
-  let status: AirportStatus["status"] = "unknown";
-  if (groundStop) status = "ground_stop";
-  else if (delay) status = "delay";
-  else if (!delay && !groundStop) status = "normal";
-
-  const noteParts = [reason, avgDelay ? `AvgDelay: ${avgDelay}` : ""].filter(Boolean);
-  const note = noteParts.length ? noteParts.join(" • ") : undefined;
-
-  return { name, status, note };
-}
-
-async function fetchAirportStatus(code: string): Promise<AirportStatus> {
-  // This is the FAA Airport Status Web Service (ASWS) endpoint that many tools (including NAS Status-style apps) rely on.
-  // We call it SERVER-SIDE to avoid browser CORS issues.
-  const url = `https://soa.smext.faa.gov/asws/api/airport/status/${encodeURIComponent(code)}`;
-
+  // Some government endpoints behave better with a UA + accept header.
   const res = await fetch(url, {
-    // keep cache modest; you can tighten later
-    cache: "no-store",
+    method: "GET",
     headers: {
-      // Some deployments respond with XML by default; we accept either.
-      Accept: "application/json, text/xml, application/xml;q=0.9, */*;q=0.8",
+      Accept: "application/json",
+      "User-Agent": "AviationSafetyWatchMVP/1.0 (contact: admin@aviationsafetywatch.com)",
     },
+    cache: "no-store",
   });
 
-  const text = await res.text();
-
-  // Try JSON first
-  try {
-    const json = JSON.parse(text);
-
-    // JSON shapes vary, so we defensively map.
-    const name: string | undefined =
-      json?.Name || json?.name || json?.airport?.name || json?.Airport?.Name;
-
-    const delayVal =
-      json?.Delay ?? json?.delay ?? json?.airport?.delay ?? json?.Airport?.Delay;
-    const groundStopVal =
-      json?.GroundStop ?? json?.groundStop ?? json?.Airport?.GroundStop;
-
-    const delay = String(delayVal).toLowerCase() === "true";
-    const groundStop = String(groundStopVal).toLowerCase() === "true";
-
-    let status: AirportStatus["status"] = "unknown";
-    if (groundStop) status = "ground_stop";
-    else if (delay) status = "delay";
-    else if (!delay && !groundStop) status = "normal";
-
-    const reason =
-      json?.Reason ?? json?.reason ?? json?.Airport?.Reason ?? json?.Status?.Reason;
-    const avgDelay =
-      json?.AvgDelay ?? json?.avgDelay ?? json?.Airport?.AvgDelay ?? json?.Status?.AvgDelay;
-
-    const noteParts = [reason, avgDelay ? `AvgDelay: ${avgDelay}` : ""].filter(Boolean);
-    const note = noteParts.length ? noteParts.join(" • ") : undefined;
-
-    return { code, name, status, note, raw: json };
-  } catch {
-    // Fall back to XML
-    const parsed = parseAswsXml(text);
+  if (!res.ok) {
     return {
-      code,
-      name: parsed.name,
-      status: parsed.status ?? "unknown",
-      note: parsed.note,
-      raw: undefined,
+      ok: false as const,
+      httpStatus: res.status,
+      data: null,
     };
   }
+
+  const data = await res.json();
+  return { ok: true as const, httpStatus: res.status, data };
 }
 
-export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const codesParam = searchParams.get("codes") || "LAX,SFO,JFK,ORD";
-  const codes = codesParam
-    .split(",")
-    .map((c) => c.trim().toUpperCase())
-    .filter(Boolean)
-    .slice(0, 25);
+function normalizeStatusFromFaaJson(faaJson: any) {
+  // We DO NOT guess. We only map what FAA explicitly provides.
+  const statusObj = faaJson?.Status ?? {};
+  const delay = Boolean(statusObj?.Delay);
+  const groundStop = Boolean(statusObj?.GroundStop);
+  const reason: string | undefined = statusObj?.Reason;
+  const closure: string | undefined = statusObj?.ClosureBegin; // sometimes present
+  const end: string | undefined = statusObj?.EndTime; // sometimes present
 
-  try {
-    const results = await Promise.all(codes.map((c) => fetchAirportStatus(c)));
+  let status: "normal" | "delay" | "ground_stop" | "unknown" = "unknown";
+  if (groundStop) status = "ground_stop";
+  else if (delay) status = "delay";
+  else if (typeof statusObj?.Reason === "string" || statusObj?.Delay === false) status = "normal";
 
-    return NextResponse.json(
-      {
-        updatedAt: new Date().toISOString(),
-        source: "FAA ASWS airport status (server-side fetch)",
-        airports: results,
-      },
-      { status: 200 }
-    );
-  } catch (e: any) {
-    return NextResponse.json(
-      {
-        updatedAt: new Date().toISOString(),
-        source: "FAA ASWS airport status (server-side fetch)",
-        error: e?.message || "Unknown error",
-      },
-      { status: 500 }
-    );
-  }
+  return {
+    status,
+    reason: reason ?? null,
+    closureBegin: closure ?? null,
+    endTime: end ?? null,
+  };
+}
+
+export async function GET() {
+  const updatedAt = new Date().toISOString();
+
+  const results = await Promise.all(
+    AIRPORTS.map(async (a) => {
+      try {
+        const faa = await fetchFaaAirportStatus(a.code);
+
+        if (!faa.ok) {
+          return {
+            ...a,
+            status: "unknown" as const,
+            source: "FAA ASWS",
+            updatedAt,
+            note: `FAA HTTP ${faa.httpStatus}`,
+          };
+        }
+
+        const normalized = normalizeStatusFromFaaJson(faa.data);
+
+        return {
+          ...a,
+          status: normalized.status,
+          source: "FAA ASWS",
+          updatedAt,
+          note: normalized.reason ?? null,
+          raw: {
+            // keep a small slice for transparency/debug
+            Delay: faa.data?.Status?.Delay ?? null,
+            GroundStop: faa.data?.Status?.GroundStop ?? null,
+            Reason: faa.data?.Status?.Reason ?? null,
+          },
+        };
+      } catch (e: any) {
+        return {
+          ...a,
+          status: "unknown" as const,
+          source: "FAA ASWS",
+          updatedAt,
+          note: `Fetch error`,
+        };
+      }
+    })
+  );
+
+  return NextResponse.json({
+    updatedAt,
+    airports: results,
+  });
 }
