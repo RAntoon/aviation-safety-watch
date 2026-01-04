@@ -4,21 +4,30 @@ import dynamic from "next/dynamic";
 import "leaflet/dist/leaflet.css";
 import React, { useEffect, useState } from "react";
 
-/* 🔒 Dynamically import react-leaflet components */
-const MapContainer = dynamic(
-  () => import("react-leaflet").then((m) => m.MapContainer as any),
+/**
+ * IMPORTANT:
+ * We cast the dynamically imported react-leaflet components to `any`
+ * at the variable level (not just inside `.then()`), otherwise TS/Next
+ * can still infer the props as `{}` and you get "children does not exist".
+ */
+
+const MapContainer: any = dynamic(
+  () => import("react-leaflet").then((m) => m.MapContainer),
   { ssr: false }
 );
-const TileLayer = dynamic(
-  () => import("react-leaflet").then((m) => m.TileLayer as any),
+
+const TileLayer: any = dynamic(
+  () => import("react-leaflet").then((m) => m.TileLayer),
   { ssr: false }
 );
-const CircleMarker = dynamic(
-  () => import("react-leaflet").then((m) => m.CircleMarker as any),
+
+const CircleMarker: any = dynamic(
+  () => import("react-leaflet").then((m) => m.CircleMarker),
   { ssr: false }
 );
-const Popup = dynamic(
-  () => import("react-leaflet").then((m) => m.Popup as any),
+
+const Popup: any = dynamic(
+  () => import("react-leaflet").then((m) => m.Popup),
   { ssr: false }
 );
 
@@ -52,6 +61,10 @@ export default function MapView() {
         cache: "no-store",
       });
 
+      if (!r.ok) {
+        throw new Error(`API error ${r.status}`);
+      }
+
       const data = await r.json();
       const cases = data?.cases || data?.Cases || data || [];
 
@@ -60,22 +73,21 @@ export default function MapView() {
       for (const c of cases) {
         const lat = Number(c.latitude ?? c.Latitude);
         const lon = Number(c.longitude ?? c.Longitude);
-
         if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
 
         rows.push({
           id: String(c.mkey ?? c.NtsbNumber ?? `${lat}-${lon}`),
           lat,
           lon,
-          title: c.EventType ?? "Aviation Accident",
-          date: c.EventDate,
+          title: c.EventType ?? c.EventTypeDescription ?? "Aviation event",
+          date: c.EventDate ?? c.EventDateTime,
           ntsb: c.NtsbNumber,
         });
       }
 
       setMarkers(rows);
     } catch (e: any) {
-      setError(String(e.message ?? e));
+      setError(String(e?.message ?? e));
     } finally {
       setLoading(false);
     }
@@ -87,7 +99,6 @@ export default function MapView() {
 
   return (
     <div style={{ height: "100vh", width: "100vw" }}>
-      {/* Control panel */}
       <div
         style={{
           position: "absolute",
@@ -120,12 +131,7 @@ export default function MapView() {
         />
 
         {markers.map((m) => (
-          <CircleMarker
-            key={m.id}
-            center={[m.lat, m.lon]}
-            radius={7}
-            pathOptions={{}}
-          >
+          <CircleMarker key={m.id} center={[m.lat, m.lon]} radius={7}>
             <Popup>
               <strong>{m.title}</strong>
               {m.date && <div>Date: {m.date}</div>}
