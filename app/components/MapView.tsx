@@ -8,43 +8,52 @@ type Airport = {
   name: string;
   lat: number;
   lon: number;
-  status: "normal" | "delay" | "ground_stop" | "unknown";
+  status: "unknown" | "normal" | "delay" | "ground_stop" | "closed";
   source?: string;
   updatedAt?: string;
-  note?: string | null;
-  raw?: {
-    Delay: boolean | null;
-    GroundStop: boolean | null;
+  note?: string;
+  faa?: {
+    Status: string | null;
+    Delay: string | null;
     Reason: string | null;
+    Trend: string | null;
+    EndTime: string | null;
   };
 };
 
-type ApiResponse = {
+type ApiResp = {
   updatedAt: string;
   airports: Airport[];
 };
 
-function colorFor(status: Airport["status"]) {
-  // No “guessing” — just display categories.
-  if (status === "ground_stop") return "#d32f2f";
-  if (status === "delay") return "#f57c00";
-  if (status === "normal") return "#2e7d32";
-  return "#455a64"; // unknown
+function statusLabel(s: Airport["status"]) {
+  switch (s) {
+    case "normal":
+      return "NORMAL";
+    case "delay":
+      return "DELAY";
+    case "ground_stop":
+      return "GROUND STOP";
+    case "closed":
+      return "CLOSED";
+    default:
+      return "UNKNOWN";
+  }
 }
 
 export default function MapView() {
-  const [data, setData] = useState<ApiResponse | null>(null);
+  const [data, setData] = useState<ApiResp | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
-    setError(null);
     try {
-      const res = await fetch("/api/airports", { cache: "no-store" });
-      if (!res.ok) throw new Error(`API HTTP ${res.status}`);
-      const json = (await res.json()) as ApiResponse;
-      setData(json);
+      setError(null);
+      const r = await fetch("/api/airports", { cache: "no-store" });
+      if (!r.ok) throw new Error(`API HTTP ${r.status}`);
+      const j = (await r.json()) as ApiResp;
+      setData(j);
     } catch (e: any) {
-      setError(e?.message ?? "Failed to load");
+      setError(e?.message || "Fetch failed");
     }
   }
 
@@ -56,11 +65,7 @@ export default function MapView() {
 
   const airports = data?.airports ?? [];
 
-  const headerText = useMemo(() => {
-    if (error) return `API error: ${error}`;
-    if (!data) return "Loading FAA status…";
-    return "FAA status: server-side ASWS fetch (real FAA source). If UNKNOWN, we are not guessing.";
-  }, [data, error]);
+  const center = useMemo(() => [39.5, -98.35] as [number, number], []);
 
   return (
     <div style={{ height: "100vh", width: "100vw" }}>
@@ -68,30 +73,35 @@ export default function MapView() {
         style={{
           position: "absolute",
           zIndex: 1000,
-          left: 12,
-          top: 12,
-          background: "white",
-          padding: 10,
-          borderRadius: 10,
-          boxShadow: "0 2px 12px rgba(0,0,0,0.12)",
-          maxWidth: 360,
-          fontSize: 14,
+          padding: 12
         }}
       >
-        <div style={{ fontWeight: 700 }}>Aviation Safety Watch (MVP)</div>
-        <div>Airports plotted: {airports.length}</div>
-        <div style={{ marginTop: 6 }}>{headerText}</div>
-        {data?.updatedAt ? (
-          <div style={{ marginTop: 6, opacity: 0.8 }}>Updated: {new Date(data.updatedAt).toLocaleString()}</div>
-        ) : null}
+        <div
+          style={{
+            background: "white",
+            padding: 10,
+            borderRadius: 8,
+            boxShadow: "0 2px 12px rgba(0,0,0,0.12)",
+            maxWidth: 420
+          }}
+        >
+          <div style={{ fontWeight: 700 }}>Aviation Safety Watch (MVP)</div>
+          <div>Airports plotted: {airports.length}</div>
+          <div style={{ fontSize: 12, opacity: 0.8 }}>
+            Data source: FAA ASWS (official FAA endpoint)
+          </div>
+          <div style={{ fontSize: 12, opacity: 0.8 }}>
+            Updated: {data?.updatedAt ? new Date(data.updatedAt).toLocaleString() : "—"}
+          </div>
+          {error ? (
+            <div style={{ marginTop: 6, fontSize: 12, color: "crimson" }}>
+              Map API error: {error}
+            </div>
+          ) : null}
+        </div>
       </div>
 
-      <MapContainer
-        center={[39.5, -98.35]} // Continental US
-        zoom={4}
-        scrollWheelZoom={true}
-        style={{ height: "100%", width: "100%" }}
-      >
+      <MapContainer center={center} zoom={4} scrollWheelZoom style={{ height: "100%", width: "100%" }}>
         <TileLayer
           attribution='&copy; OpenStreetMap contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -101,30 +111,37 @@ export default function MapView() {
           <CircleMarker
             key={a.code}
             center={[a.lat, a.lon]}
-            radius={10}
+            radius={8}
             pathOptions={{
-              color: colorFor(a.status),
-              fillColor: colorFor(a.status),
-              fillOpacity: 0.8,
+              // keep it simple for MVP (color defaults are fine, but you can color by status later)
             }}
           >
             <Popup>
-              <div style={{ fontWeight: 700 }}>
-                {a.code} — {a.name}
-              </div>
-              <div>
-                Status: <b>{a.status.toUpperCase()}</b>
-              </div>
-              <div>Source: {a.source ?? "—"}</div>
-              <div>Updated: {a.updatedAt ? new Date(a.updatedAt).toLocaleString() : "—"}</div>
-              <div style={{ marginTop: 6 }}>
-                Note: {a.note ? a.note : "—"}
-              </div>
-              {a.raw ? (
-                <div style={{ marginTop: 6, fontSize: 12, opacity: 0.85 }}>
-                  FAA raw: Delay={String(a.raw.Delay)} GroundStop={String(a.raw.GroundStop)} Reason={String(a.raw.Reason)}
+              <div style={{ minWidth: 220 }}>
+                <div style={{ fontWeight: 700 }}>
+                  {a.code} — {a.name}
                 </div>
-              ) : null}
+                <div>Status: {statusLabel(a.status)}</div>
+                <div style={{ fontSize: 12, opacity: 0.85 }}>
+                  Source: {a.source || "—"}
+                </div>
+
+                {a.faa ? (
+                  <div style={{ fontSize: 12, marginTop: 6 }}>
+                    <div>FAA Status: {a.faa.Status ?? "—"}</div>
+                    <div>FAA Delay: {a.faa.Delay ?? "—"}</div>
+                    <div>Reason: {a.faa.Reason ?? "—"}</div>
+                    <div>Trend: {a.faa.Trend ?? "—"}</div>
+                    <div>EndTime: {a.faa.EndTime ?? "—"}</div>
+                  </div>
+                ) : null}
+
+                {a.note ? (
+                  <div style={{ fontSize: 12, marginTop: 6, color: "crimson" }}>
+                    Note: {a.note}
+                  </div>
+                ) : null}
+              </div>
             </Popup>
           </CircleMarker>
         ))}
