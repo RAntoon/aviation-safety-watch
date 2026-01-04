@@ -1,17 +1,13 @@
+// app/layout.tsx
 export const metadata = {
   title: "Aviation Safety Watch",
-  description: "Live US aviation safety events and airport delay dashboard"
+  description: "Live US aviation safety events map (NTSB-backed MVP)",
 };
 
-export default function RootLayout({
-  children
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <head>
-        {/* Leaflet CSS */}
         <link
           rel="stylesheet"
           href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
