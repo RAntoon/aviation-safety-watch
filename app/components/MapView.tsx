@@ -1,104 +1,60 @@
-'use client';
+"use client";
 
-import { useEffect, useState } from 'react';
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
+import { MapContainer, TileLayer, CircleMarker, Popup } from "react-leaflet";
+import "leaflet/dist/leaflet.css";
 
-type AirportStatus = {
-  code: string;
-  name: string;
-  lat: number;
-  lon: number;
-  status: string;
-  source?: string;
-  updated?: string;
-  note?: string;
+type NtsbCase = {
+  NtsbNumber?: string;
+  EventDate?: string;
+  City?: string;
+  State?: string;
+  Latitude?: number;
+  Longitude?: number;
+  InjurySeverity?: string;
 };
 
-// Fix Leaflet marker icons (Next.js/Vercel)
-delete (L.Icon.Default.prototype as any)._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-});
-
-export default function MapView() {
-  const [airports, setAirports] = useState<AirportStatus[]>([]);
-  const [updated, setUpdated] = useState<string>('—');
-
-  useEffect(() => {
-    async function load() {
-      try {
-        const res = await fetch('/api/airports', { cache: 'no-store' });
-        const data = await res.json();
-        setAirports(data.airports ?? []);
-        setUpdated(data.updatedAt ?? '—');
-      } catch {
-        setAirports([]);
-        setUpdated('—');
-      }
-    }
-    load();
-  }, []);
-
-  const center: [number, number] = [39.5, -98.35];
-
+export default function MapView({ cases }: { cases: NtsbCase[] }) {
   return (
-    <div style={{ height: '100vh', width: '100vw' }}>
-      <div
-        style={{
-          position: 'absolute',
-          top: 12,
-          left: 12,
-          zIndex: 1000,
-          background: 'white',
-          padding: 10,
-          borderRadius: 8,
-          boxShadow: '0 2px 12px rgba(0,0,0,0.15)',
-          maxWidth: 320,
-          fontSize: 14,
-        }}
-      >
-        <strong>Aviation Safety Watch (MVP)</strong>
-        <div>Airports plotted: {airports.length}</div>
-        <div>Updated: {updated}</div>
-      </div>
+    <MapContainer
+      style={{ height: "100vh", width: "100%" }}
+      zoom={4}
+      center={[39.5, -98.35]}
+      scrollWheelZoom
+    >
+      <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
 
-      <MapContainer
-        {...({
-          center,
-          zoom: 4,
-          scrollWheelZoom: true,
-          style: { height: '100%', width: '100%' },
-        } as any)}
-      >
-        {/* NOTE: removed attribution prop to avoid TS mismatch */}
-        <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-
-        {airports.map((a) => (
-          <Marker key={a.code} position={[a.lat, a.lon]}>
+      {cases
+        .filter((c) => typeof c.Latitude === "number" && typeof c.Longitude === "number")
+        .map((c, i) => (
+          <CircleMarker
+            key={c.NtsbNumber ?? i}
+            center={[c.Latitude as number, c.Longitude as number]}
+            radius={6}
+            pathOptions={{ color: "red" }}
+          >
             <Popup>
-              <strong>
-                {a.code} — {a.name}
-              </strong>
+              <strong>NTSB Case</strong>
               <br />
-              Status: {a.status}
+              {c.City}, {c.State}
               <br />
-              Source: {a.source ?? 'FAA'}
+              Date: {c.EventDate ?? "Unknown"}
               <br />
-              Updated: {a.updated ?? '—'}
-              {a.note ? (
-                <>
-                  <br />
-                  Note: {a.note}
-                </>
-              ) : null}
+              Severity: {c.InjurySeverity ?? "Unknown"}
+              <br />
+              {c.NtsbNumber ? (
+                <a
+                  href={`https://data.ntsb.gov/Docket?NTSBNumber=${c.NtsbNumber}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  View NTSB Docket
+                </a>
+              ) : (
+                <span>No docket link</span>
+              )}
             </Popup>
-          </Marker>
+          </CircleMarker>
         ))}
-      </MapContainer>
-    </div>
+    </MapContainer>
   );
 }
