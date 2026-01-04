@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 
-// NTSB base (Public)
 const NTSB_BASE =
   "https://api.ntsb.gov/public/api/Aviation/v1/GetCasesByDateRange";
 
@@ -19,12 +18,12 @@ function last12MonthsRange() {
   return { start, end };
 }
 
-// Try a couple parameter spellings because the swagger/docs vary by endpoint family.
+// Try a couple parameter spellings because some docs differ by endpoint family.
 async function fetchNtsb(startYmd: string, endYmd: string) {
   const candidates: string[] = [
     `${NTSB_BASE}?startDate=${encodeURIComponent(startYmd)}&endDate=${encodeURIComponent(endYmd)}`,
     `${NTSB_BASE}?StartDate=${encodeURIComponent(startYmd)}&EndDate=${encodeURIComponent(endYmd)}`,
-    `${NTSB_BASE}?from=${encodeURIComponent(startYmd)}&to=${encodeURIComponent(endYmd)}`,
+    `${NTSB_BASE}?from=${encodeURIComponent(startYmd)}&to=${encodeURIComponent(endYmd)}`
   ];
 
   let lastErr: any = null;
@@ -33,12 +32,12 @@ async function fetchNtsb(startYmd: string, endYmd: string) {
     try {
       const res = await fetch(url, {
         method: "GET",
-        // Some gov endpoints behave better if you send a UA + accept.
         headers: {
-          "Accept": "application/json",
-          "User-Agent": "AviationSafetyWatch/1.0 (contact: you@example.com)",
+          Accept: "application/json",
+          // Some .gov endpoints behave better if a UA exists.
+          "User-Agent": "AviationSafetyWatch/1.0"
         },
-        cache: "no-store",
+        cache: "no-store"
       });
 
       const text = await res.text();
@@ -48,7 +47,7 @@ async function fetchNtsb(startYmd: string, endYmd: string) {
           url,
           status: res.status,
           statusText: res.statusText,
-          bodyPreview: text.slice(0, 500),
+          bodyPreview: text.slice(0, 500)
         };
         continue;
       }
@@ -93,7 +92,7 @@ export async function GET(req: Request) {
         start,
         end,
         message: "NTSB fetch failed",
-        error: ntsb.error,
+        error: ntsb.error
       },
       { status: 502 }
     );
@@ -107,7 +106,7 @@ export async function GET(req: Request) {
       source: "NTSB Public API",
       urlUsed: ntsb.urlUsed,
       data: ntsb.data,
-      fetchedAt: new Date().toISOString(),
+      fetchedAt: new Date().toISOString()
     },
     { status: 200 }
   );
