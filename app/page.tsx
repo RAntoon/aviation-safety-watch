@@ -1,6 +1,5 @@
-import dynamic from "next/dynamic";
-
-const MapView = dynamic(() => import("./components/MapView"), { ssr: false });
+// app/page.tsx
+import MapView from "./components/MapView";
 
 export default function Page() {
   return <MapView />;
