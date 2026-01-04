@@ -1,52 +1,46 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import dynamic from "next/dynamic";
+import React, { useEffect, useMemo, useState } from "react";
+import { MapContainer, TileLayer, CircleMarker, Popup } from "react-leaflet";
 
-// Dynamic imports prevent SSR “window is not defined” issues with Leaflet
-const MapContainer = dynamic(
-  () => import("react-leaflet").then((m) => m.MapContainer),
-  { ssr: false }
-);
-const TileLayer = dynamic(
-  () => import("react-leaflet").then((m) => m.TileLayer),
-  { ssr: false }
-);
-const CircleMarker = dynamic(
-  () => import("react-leaflet").then((m) => m.CircleMarker),
-  { ssr: false }
-);
-const Popup = dynamic(() => import("react-leaflet").then((m) => m.Popup), {
-  ssr: false,
-});
-
-type AirportStatus = {
+type Airport = {
   code: string;
   name: string;
   lat: number;
   lon: number;
-  status: "normal" | "delay" | "ground_stop" | "closed" | "unknown";
-  sourceError?: string;
-  faaRaw?: any;
+};
+
+type ApiAirportStatus = {
+  code: string;
+  name?: string;
+  status: "normal" | "delay" | "ground_stop" | "unknown";
+  note?: string;
 };
 
 type ApiResponse = {
   updatedAt: string;
-  airports: AirportStatus[];
+  source: string;
+  airports: ApiAirportStatus[];
 };
 
-function statusColor(s: AirportStatus["status"]) {
+const AIRPORTS: Airport[] = [
+  // Real coordinates:
+  { code: "LAX", name: "Los Angeles Intl", lat: 33.9416, lon: -118.4085 },
+  { code: "SFO", name: "San Francisco Intl", lat: 37.6213, lon: -122.3790 },
+  { code: "JFK", name: "John F. Kennedy Intl", lat: 40.6413, lon: -73.7781 },
+  { code: "ORD", name: "Chicago O'Hare Intl", lat: 41.9742, lon: -87.9073 },
+];
+
+function statusLabel(s: ApiAirportStatus["status"]) {
   switch (s) {
-    case "normal":
-      return "green";
-    case "delay":
-      return "orange";
     case "ground_stop":
-      return "red";
-    case "closed":
-      return "black";
+      return "GROUND STOP";
+    case "delay":
+      return "DELAY";
+    case "normal":
+      return "NORMAL";
     default:
-      return "gray";
+      return "UNKNOWN";
   }
 }
 
@@ -54,65 +48,84 @@ export default function MapView() {
   const [data, setData] = useState<ApiResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function load() {
-    try {
-      setError(null);
-      const res = await fetch("/api/airports", { cache: "no-store" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = (await res.json()) as ApiResponse;
-      setData(json);
-    } catch (e: any) {
-      setError(String(e?.message ?? e));
-    }
-  }
+  const codes = useMemo(() => AIRPORTS.map((a) => a.code).join(","), []);
 
   useEffect(() => {
-    load();
-    const id = setInterval(load, 60_000); // refresh every minute
-    return () => clearInterval(id);
-  }, []);
+    let cancelled = false;
 
-  const airports = data?.airports ?? [];
+    async function run() {
+      try {
+        setError(null);
+        const res = await fetch(`/api/airports?codes=${encodeURIComponent(codes)}`, {
+          cache: "no-store",
+        });
+        if (!res.ok) throw new Error(`API error: ${res.status}`);
+        const json = (await res.json()) as ApiResponse;
+        if (!cancelled) setData(json);
+      } catch (e: any) {
+        if (!cancelled) setError(e?.message || "Fetch failed");
+      }
+    }
 
-  const center = useMemo<[number, number]>(() => {
-    // Center on continental US for MVP
-    return [39.5, -98.35];
-  }, []);
+    run();
+    const id = setInterval(run, 60_000); // refresh every 60s
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [codes]);
+
+  const statusByCode = useMemo(() => {
+    const m = new Map<string, ApiAirportStatus>();
+    for (const a of data?.airports || []) m.set(a.code, a);
+    return m;
+  }, [data]);
 
   return (
     <div style={{ height: "100vh", width: "100vw" }}>
-      <MapContainer center={center} zoom={4} scrollWheelZoom style={{ height: "100%", width: "100%" }}>
+      <MapContainer center={[39.5, -98.35]} zoom={4} scrollWheelZoom style={{ height: "100%", width: "100%" }}>
         <TileLayer
           attribution='&copy; OpenStreetMap contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
-        {airports.map((a) => (
-          <CircleMarker
-            key={a.code}
-            center={[a.lat, a.lon]}
-            radius={10}
-            pathOptions={{ color: statusColor(a.status) }}
-          >
-            <Popup>
-              <div style={{ minWidth: 220 }}>
-                <div style={{ fontWeight: 700 }}>
-                  {a.code} — {a.name}
-                </div>
-                <div>Status: {a.status}</div>
-                {a.sourceError ? <div>FAA fetch: {a.sourceError}</div> : null}
-                {data?.updatedAt ? (
-                  <div style={{ marginTop: 8, opacity: 0.7, fontSize: 12 }}>
-                    Updated: {new Date(data.updatedAt).toLocaleString()}
+        {AIRPORTS.map((a) => {
+          const s = statusByCode.get(a.code);
+          // Don’t “invent” a status: if FAA fetch fails, it stays UNKNOWN.
+          const status = s?.status ?? "unknown";
+
+          // Leaflet default marker coloring is awkward without icon assets.
+          // CircleMarker keeps it simple; color is just for visibility, not to imply certainty.
+          const radius = status === "ground_stop" ? 10 : status === "delay" ? 9 : 8;
+
+          return (
+            <CircleMarker key={a.code} center={[a.lat, a.lon]} radius={radius} pathOptions={{}}>
+              <Popup>
+                <div style={{ minWidth: 220 }}>
+                  <div style={{ fontWeight: 700 }}>
+                    {a.code} — {a.name}
                   </div>
-                ) : null}
-              </div>
-            </Popup>
-          </CircleMarker>
-        ))}
+                  <div>
+                    Status: <b>{statusLabel(status)}</b>
+                  </div>
+                  {s?.note ? <div style={{ marginTop: 6 }}>{s.note}</div> : null}
+                  <div style={{ marginTop: 8, fontSize: 12, opacity: 0.7 }}>
+                    Source: {data?.source || "—"}
+                    <br />
+                    Updated: {data?.updatedAt ? new Date(data.updatedAt).toLocaleString() : "—"}
+                  </div>
+                  {error ? (
+                    <div style={{ marginTop: 8, fontSize: 12, color: "#b00020" }}>
+                      API: {error}
+                    </div>
+                  ) : null}
+                </div>
+              </Popup>
+            </CircleMarker>
+          );
+        })}
       </MapContainer>
 
-      {/* Simple overlay */}
       <div
         style={{
           position: "absolute",
@@ -120,17 +133,20 @@ export default function MapView() {
           left: 12,
           zIndex: 1000,
           background: "white",
-          padding: 10,
-          borderRadius: 8,
+          padding: 12,
+          borderRadius: 10,
           boxShadow: "0 2px 12px rgba(0,0,0,0.12)",
-          fontSize: 14,
+          maxWidth: 320,
         }}
       >
-        <div style={{ fontWeight: 700 }}>Aviation Safety Watch (MVP)</div>
-        <div>Airports plotted: {airports.length}</div>
-        {error ? <div style={{ marginTop: 6 }}>API error: {error}</div> : null}
-        <div style={{ marginTop: 6, opacity: 0.75 }}>
-          Status source: FAA airport status endpoint (if available)
+        <div style={{ fontWeight: 800, marginBottom: 6 }}>Aviation Safety Watch (MVP)</div>
+        <div style={{ fontSize: 13, opacity: 0.85 }}>
+          Airports plotted: {AIRPORTS.length}
+          <br />
+          FAA status: server-side ASWS fetch (real FAA source)
+        </div>
+        <div style={{ marginTop: 8, fontSize: 12, opacity: 0.7 }}>
+          If an airport shows <b>UNKNOWN</b>, we are not guessing—FAA fetch didn’t return a usable status.
         </div>
       </div>
     </div>
