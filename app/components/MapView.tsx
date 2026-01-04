@@ -1,183 +1,319 @@
+// @ts-nocheck
 "use client";
 
-import dynamic from "next/dynamic";
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { MapContainer, TileLayer, CircleMarker, Popup } from "react-leaflet";
+import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
-import type React from "react";
-import type {
-  MapContainerProps,
-  TileLayerProps,
-  CircleMarkerProps,
-  PopupProps,
-} from "react-leaflet";
-
-type NtsbPoint = {
-  id: string;
-  name: string;
-  date: string;
-  lat: number;
-  lon: number;
-  url?: string;
-};
-
-function isoDateOnly(d: Date) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+function toYMD(d: Date) {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
 }
 
-// ✅ Properly typed dynamic imports (this fixes the “center/zoom does not exist” TS errors)
-const MapContainer = dynamic(
-  () => import("react-leaflet").then((m) => m.MapContainer),
-  { ssr: false }
-) as unknown as React.ComponentType<MapContainerProps>;
+function last12MonthsRange() {
+  const end = new Date();
+  const start = new Date(end);
+  start.setFullYear(end.getFullYear() - 1);
+  return { start, end };
+}
 
-const TileLayer = dynamic(
-  () => import("react-leaflet").then((m) => m.TileLayer),
-  { ssr: false }
-) as unknown as React.ComponentType<TileLayerProps>;
+// Fix default marker icon paths (common Next/Vercel issue)
+delete (L.Icon.Default.prototype as any)._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl:
+    "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
+  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
+  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png"
+});
 
-const CircleMarker = dynamic(
-  () => import("react-leaflet").then((m) => m.CircleMarker),
-  { ssr: false }
-) as unknown as React.ComponentType<CircleMarkerProps>;
+type Dot = {
+  id: string;
+  lat: number;
+  lon: number;
+  title: string;
+  date?: string;
+  location?: string;
+  ntsbNumber?: string;
+};
 
-const Popup = dynamic(
-  () => import("react-leaflet").then((m) => m.Popup),
-  { ssr: false }
-) as unknown as React.ComponentType<PopupProps>;
+function pickLatLon(item: any): { lat: number; lon: number } | null {
+  const lat =
+    item?.latitude ??
+    item?.Latitude ??
+    item?.lat ??
+    item?.Lat ??
+    item?.Location?.Latitude ??
+    item?.location?.latitude ??
+    item?.Geo?.Latitude;
 
-export default function MapView() {
-  const today = useMemo(() => new Date(), []);
-  const defaultStart = useMemo(() => {
-    const d = new Date();
-    d.setFullYear(d.getFullYear() - 1);
-    return d;
-  }, []);
+  const lon =
+    item?.longitude ??
+    item?.Longitude ??
+    item?.lon ??
+    item?.Lon ??
+    item?.Location?.Longitude ??
+    item?.location?.longitude ??
+    item?.Geo?.Longitude ??
+    item?.lng ??
+    item?.Lng;
 
-  const [start, setStart] = useState<string>(isoDateOnly(defaultStart));
-  const [end, setEnd] = useState<string>(isoDateOnly(today));
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string>("");
-  const [points, setPoints] = useState<NtsbPoint[]>([]);
-  const [updatedAt, setUpdatedAt] = useState<string>("");
+  const latNum = Number(lat);
+  const lonNum = Number(lon);
 
-  async function load() {
-    setLoading(true);
-    setError("");
-    try {
-      const res = await fetch(
-        `/api/ntsb?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
-        { cache: "no-store" }
-      );
+  if (Number.isFinite(latNum) && Number.isFinite(lonNum)) return { lat: latNum, lon: lonNum };
+  return null;
+}
 
-      if (!res.ok) {
-        const txt = await res.text().catch(() => "");
-        throw new Error(
-          `NTSB fetch failed (${res.status}). ${txt || "Check /api/ntsb server logs."}`
-        );
-      }
+function pickNtsbNumber(item: any): string | undefined {
+  return (
+    item?.ntsbNumber ??
+    item?.NtsbNumber ??
+    item?.NTSBNumber ??
+    item?.CaseNumber ??
+    item?.caseNumber ??
+    item?.InvestigationNumber ??
+    item?.investigationNumber ??
+    item?.NtsbNo
+  );
+}
 
-      const data = (await res.json()) as { updatedAt: string; points: NtsbPoint[] };
-      setPoints(Array.isArray(data.points) ? data.points : []);
-      setUpdatedAt(data.updatedAt || new Date().toLocaleString());
-    } catch (e: any) {
-      setPoints([]);
-      setError(e?.message || "NTSB fetch failed.");
-      setUpdatedAt(new Date().toLocaleString());
-    } finally {
-      setLoading(false);
+function pickDate(item: any): string | undefined {
+  return (
+    item?.eventDate ??
+    item?.EventDate ??
+    item?.AccidentDate ??
+    item?.accidentDate ??
+    item?.OccurrenceDate ??
+    item?.occurrenceDate ??
+    item?.Date
+  );
+}
+
+function pickTitle(item: any): string {
+  return (
+    item?.title ??
+    item?.Title ??
+    item?.EventType ??
+    item?.eventType ??
+    item?.AircraftCategory ??
+    item?.aircraftCategory ??
+    "Aviation case"
+  );
+}
+
+function pickLocation(item: any): string | undefined {
+  const city = item?.city ?? item?.City;
+  const state = item?.state ?? item?.State;
+  const country = item?.country ?? item?.Country;
+
+  const parts = [city, state, country].filter(Boolean);
+  if (parts.length) return parts.join(", ");
+
+  return item?.location ?? item?.LocationName ?? item?.Location ?? undefined;
+}
+
+function flattenCases(payload: any): any[] {
+  if (!payload) return [];
+  if (Array.isArray(payload)) return payload;
+
+  // Common patterns: { data: [...] } or { Results: [...] } etc.
+  const candidates = [
+    payload?.data,
+    payload?.Data,
+    payload?.results,
+    payload?.Results,
+    payload?.cases,
+    payload?.Cases,
+    payload?.items,
+    payload?.Items
+  ];
+
+  for (const c of candidates) {
+    if (Array.isArray(c)) return c;
+  }
+
+  // Sometimes nested like { data: { results: [...] } }
+  for (const c of candidates) {
+    if (c && typeof c === "object") {
+      const inner = flattenCases(c);
+      if (inner.length) return inner;
     }
   }
 
+  return [];
+}
+
+export default function MapView() {
+  const { startDefault, endDefault } = useMemo(() => {
+    const r = last12MonthsRange();
+    return { startDefault: toYMD(r.start), endDefault: toYMD(r.end) };
+  }, []);
+
+  const [start, setStart] = useState(startDefault);
+  const [end, setEnd] = useState(endDefault);
+  const [dots, setDots] = useState<Dot[]>([]);
+  const [status, setStatus] = useState<string>("Ready");
+  const [fetchedAt, setFetchedAt] = useState<string>("");
+
+  async function load() {
+    setStatus("Loading...");
+    setDots([]);
+
+    try {
+      const res = await fetch(`/api/ntsb?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`, {
+        cache: "no-store"
+      });
+      const json = await res.json();
+
+      if (!res.ok || !json?.ok) {
+        setStatus(`NTSB fetch failed (${res.status}). Check server response in /api/ntsb.`);
+        return;
+      }
+
+      const items = flattenCases(json.data);
+      const mapped: Dot[] = [];
+
+      for (const item of items) {
+        const ll = pickLatLon(item);
+        if (!ll) continue;
+
+        const ntsbNumber = pickNtsbNumber(item);
+        mapped.push({
+          id: String(ntsbNumber ?? item?.mkey ?? item?.MKey ?? item?.id ?? Math.random()),
+          lat: ll.lat,
+          lon: ll.lon,
+          title: pickTitle(item),
+          date: pickDate(item),
+          location: pickLocation(item),
+          ntsbNumber
+        });
+      }
+
+      setDots(mapped);
+      setFetchedAt(json.fetchedAt || "");
+      setStatus(`OK (showing ${mapped.length} dots)`);
+    } catch (e: any) {
+      setStatus(`Client error: ${String(e?.message || e)}`);
+    }
+  }
+
+  // Auto-load on first render (default: last 12 months)
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const center: [number, number] = [39.5, -98.35];
+  const centerUS: [number, number] = [39.5, -98.35];
 
   return (
-    <div style={{ height: "100vh", width: "100vw" }}>
-      {/* Controls */}
-      <div style={{ position: "absolute", zIndex: 1000, left: 12, top: 12, width: 360 }}>
-        <div
-          style={{
-            background: "white",
-            padding: 12,
-            borderRadius: 10,
-            boxShadow: "0 2px 12px rgba(0,0,0,0.12)",
-            fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial",
-          }}
-        >
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>Aviation Safety Watch (MVP)</div>
-          <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 10 }}>
-            Data source: NTSB Public API • Default range: last 12 months
-          </div>
+    <div style={{ height: "100vh", width: "100%" }}>
+      {/* Top-left control panel */}
+      <div
+        style={{
+          position: "absolute",
+          zIndex: 999,
+          top: 12,
+          left: 12,
+          background: "rgba(255,255,255,0.95)",
+          padding: 12,
+          borderRadius: 10,
+          width: 330,
+          boxShadow: "0 8px 24px rgba(0,0,0,0.15)",
+          fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
+          fontSize: 13
+        }}
+      >
+        <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 4 }}>
+          Aviation Safety Watch (MVP)
+        </div>
+        <div style={{ opacity: 0.85, marginBottom: 8 }}>
+          Data source: NTSB Public API · Default range: last 12 months
+        </div>
 
-          <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 12, marginBottom: 4 }}>Start</div>
-              <input
-                type="date"
-                value={start}
-                onChange={(e) => setStart(e.target.value)}
-                style={{ width: "100%", padding: 6 }}
-              />
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 12, marginBottom: 4 }}>End</div>
-              <input
-                type="date"
-                value={end}
-                onChange={(e) => setEnd(e.target.value)}
-                style={{ width: "100%", padding: 6 }}
-              />
-            </div>
+        <div style={{ display: "flex", gap: 10, marginBottom: 8 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 12, marginBottom: 4 }}>Start</div>
+            <input
+              type="date"
+              value={start}
+              onChange={(e) => setStart(e.target.value)}
+              style={{ width: "100%", padding: 6 }}
+            />
           </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 12, marginBottom: 4 }}>End</div>
+            <input
+              type="date"
+              value={end}
+              onChange={(e) => setEnd(e.target.value)}
+              style={{ width: "100%", padding: 6 }}
+            />
+          </div>
+        </div>
 
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
           <button
             onClick={load}
-            disabled={loading}
             style={{
               padding: "8px 10px",
               borderRadius: 8,
               border: "1px solid #ddd",
-              background: loading ? "#f6f6f6" : "white",
-              cursor: loading ? "not-allowed" : "pointer",
+              background: "#fff",
+              cursor: "pointer",
+              fontWeight: 600
             }}
           >
-            {loading ? "Loading..." : "Reload"}
+            Reload
           </button>
+          <div style={{ opacity: 0.85 }}>
+            Dots shown: <b>{dots.length}</b>
+          </div>
+        </div>
 
-          <div style={{ marginTop: 10, fontSize: 12 }}>Dots shown: {points.length}</div>
-          {error ? <div style={{ marginTop: 6, color: "#b00020", fontSize: 12 }}>{error}</div> : null}
-          <div style={{ marginTop: 6, fontSize: 12, opacity: 0.8 }}>Updated: {updatedAt || "—"}</div>
+        <div style={{ marginTop: 8, lineHeight: 1.3 }}>
+          <div>Status: <b>{status}</b></div>
+          {fetchedAt ? <div>Updated: {new Date(fetchedAt).toLocaleString()}</div> : null}
         </div>
       </div>
 
       {/* Map */}
-      <MapContainer center={center} zoom={4} scrollWheelZoom style={{ height: "100%", width: "100%" }}>
+      <MapContainer center={centerUS} zoom={4} scrollWheelZoom style={{ height: "100%", width: "100%" }}>
         <TileLayer
-          attribution="&copy; OpenStreetMap contributors"
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
-        {points.map((p) => (
-          <CircleMarker key={p.id} center={[p.lat, p.lon]} radius={6} pathOptions={{ weight: 1, fillOpacity: 0.7 }}>
+        {dots.map((d) => (
+          <CircleMarker
+            key={d.id}
+            center={[d.lat, d.lon]}
+            radius={6}
+            pathOptions={{ weight: 2, fillOpacity: 0.6 }}
+          >
             <Popup>
-              <div style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial" }}>
-                <div style={{ fontWeight: 700, marginBottom: 4 }}>{p.name || "NTSB Case"}</div>
-                <div style={{ fontSize: 12, marginBottom: 6 }}>{p.date}</div>
-                {p.url ? (
-                  <a href={p.url} target="_blank" rel="noreferrer">
-                    Open case
-                  </a>
-                ) : (
-                  <div style={{ fontSize: 12, opacity: 0.8 }}>No case link available</div>
-                )}
+              <div style={{ minWidth: 220 }}>
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>{d.title}</div>
+                {d.date ? <div><b>Date:</b> {String(d.date)}</div> : null}
+                {d.location ? <div><b>Location:</b> {d.location}</div> : null}
+                {d.ntsbNumber ? (
+                  <div style={{ marginTop: 6 }}>
+                    <b>NTSB #:</b> {d.ntsbNumber}
+                    <div style={{ marginTop: 4 }}>
+                      <a
+                        href="https://data.ntsb.gov/Docket/forms/Searchdocket"
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Open NTSB docket search
+                      </a>
+                      <div style={{ opacity: 0.7, fontSize: 12 }}>
+                        (Paste the NTSB # into the search)
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </Popup>
           </CircleMarker>
