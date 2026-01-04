@@ -1,86 +1,83 @@
 import { NextResponse } from "next/server";
 
-type AirportStatus = "normal" | "delay" | "ground_stop" | "unknown";
+export const runtime = "nodejs"; // makes fetch behavior more predictable on Vercel
 
-type Airport = {
-  code: string;
-  name: string;
-  lat: number;
-  lon: number;
-  status: AirportStatus;
-  note?: string;
-};
+const AIRPORTS = ["LAX", "SFO", "JFK", "ORD"];
 
-// Minimal “known coordinates” list for MVP.
-// (Coords are not the “status data”; they’re just where to plot the marker.)
-const AIRPORTS: Record<string, { name: string; lat: number; lon: number }> = {
-  LAX: { name: "Los Angeles Intl", lat: 33.9416, lon: -118.4085 },
-  SFO: { name: "San Francisco Intl", lat: 37.6213, lon: -122.379 },
-  JFK: { name: "John F. Kennedy Intl", lat: 40.6413, lon: -73.7781 },
-  ORD: { name: "Chicago O'Hare Intl", lat: 41.9742, lon: -87.9073 },
-};
-
-// FAA Airport Status response varies; we only need delay-ish fields safely.
-async function fetchFaaAirportStatus(code: string) {
-  const url = `https://services.faa.gov/airport/status/${encodeURIComponent(code)}?format=json`;
-  const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) throw new Error(`FAA status fetch failed for ${code}: ${res.status}`);
-  return res.json() as Promise<any>;
-}
-
-function normalizeStatus(faaJson: any): { status: AirportStatus; note?: string } {
-  // Common shape: { delay: "true"/"false" or boolean, status: { reason, closureBegin, ... } }
-  const delayVal = faaJson?.delay;
-  const isDelay = delayVal === true || delayVal === "true";
-
-  const reason =
-    faaJson?.status?.reason ||
-    faaJson?.status?.type ||
-    faaJson?.status?.description ||
-    faaJson?.reason;
-
-  if (isDelay) return { status: "delay", note: reason ? String(reason) : "FAA reports delay" };
-
-  // If the API ever indicates closure/ground stop explicitly, map it:
-  const closure = faaJson?.status?.closureBegin || faaJson?.status?.closureEnd;
-  if (closure) return { status: "ground_stop", note: reason ? String(reason) : "Possible closure" };
-
-  return { status: "normal", note: reason ? String(reason) : undefined };
+// FAA Airport Status (ASWS). If this endpoint is blocked/changes, we’ll swap it next.
+function faaUrl(code: string) {
+  return `https://services.faa.gov/airport/status/${encodeURIComponent(code)}?format=json`;
 }
 
 export async function GET() {
-  const codes = Object.keys(AIRPORTS);
+  const updatedAt = new Date().toISOString();
 
-  const results: Airport[] = [];
+  const results = await Promise.all(
+    AIRPORTS.map(async (code) => {
+      try {
+        const res = await fetch(faaUrl(code), {
+          // Some gov endpoints behave better with explicit headers
+          headers: {
+            "Accept": "application/json",
+            "User-Agent": "aviation-safety-watch/1.0 (contact: admin@aviationsafetywatch.com)",
+          },
+          cache: "no-store",
+        });
 
-  for (const code of codes) {
-    try {
-      const faa = await fetchFaaAirportStatus(code);
-      const { status, note } = normalizeStatus(faa);
+        if (!res.ok) {
+          return {
+            code,
+            name: code,
+            lat: 0,
+            lon: 0,
+            status: "unknown",
+            note: `FAA request failed: HTTP ${res.status}`,
+          };
+        }
 
-      results.push({
-        code,
-        name: AIRPORTS[code].name,
-        lat: AIRPORTS[code].lat,
-        lon: AIRPORTS[code].lon,
-        status,
-        note,
-      });
-    } catch (e: any) {
-      // If FAA endpoint errors, we still return the airport but mark unknown (no fake data).
-      results.push({
-        code,
-        name: AIRPORTS[code].name,
-        lat: AIRPORTS[code].lat,
-        lon: AIRPORTS[code].lon,
-        status: "unknown",
-        note: e?.message ?? "FAA fetch failed",
-      });
-    }
-  }
+        const data: any = await res.json();
 
-  return NextResponse.json({
-    updatedAt: new Date().toISOString(),
-    airports: results,
-  });
+        // Typical fields (can vary by airport / FAA)
+        const name = data?.name ?? code;
+        const statusRaw =
+          data?.status?.type ??
+          data?.status?.reason ??
+          data?.status?.closure ??
+          data?.status ??
+          "unknown";
+
+        // Best-effort normalization
+        const statusText = String(statusRaw).toLowerCase();
+        let status: "normal" | "delay" | "ground_stop" | "unknown" = "unknown";
+
+        if (statusText.includes("ground") && statusText.includes("stop")) status = "ground_stop";
+        else if (statusText.includes("delay")) status = "delay";
+        else if (statusText.includes("normal") || statusText.includes("no delays")) status = "normal";
+
+        // FAA response often includes latitude/longitude; if not, we’ll add a fallback later.
+        const lat = Number(data?.latitude ?? data?.lat ?? 0);
+        const lon = Number(data?.longitude ?? data?.lon ?? 0);
+
+        return {
+          code,
+          name,
+          lat,
+          lon,
+          status,
+          note: data?.status?.reason ?? data?.status?.avgDelay ?? "",
+        };
+      } catch (err: any) {
+        return {
+          code,
+          name: code,
+          lat: 0,
+          lon: 0,
+          status: "unknown",
+          note: `fetch failed: ${err?.message ?? String(err)}`,
+        };
+      }
+    })
+  );
+
+  return NextResponse.json({ updatedAt, airports: results });
 }
