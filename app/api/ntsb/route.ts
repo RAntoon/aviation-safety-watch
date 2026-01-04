@@ -1,48 +1,60 @@
 import { NextResponse } from "next/server";
 
+export const runtime = "nodejs"; // keep it server-side
+
+// IMPORTANT:
+// 1) In the NTSB Swagger page, open **GetCasesByDateRange**
+// 2) Click "Try this operation", enter dates, execute
+// 3) Copy the **Request URL** it calls
+// 4) Put the BASE part into NTSB_CASES_BY_DATE_BASE (see Step 3)
+
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
+  const start = searchParams.get("start");
+  const end = searchParams.get("end");
 
-  const startDate = searchParams.get("start"); // YYYY-MM-DD
-  const endDate = searchParams.get("end");     // YYYY-MM-DD
+  if (!start || !end) {
+    return NextResponse.json({ error: "Missing start or end" }, { status: 400 });
+  }
 
-  if (!startDate || !endDate) {
+  const base = process.env.NTSB_CASES_BY_DATE_BASE;
+  if (!base) {
     return NextResponse.json(
-      { error: "Missing start or end date. Use ?start=YYYY-MM-DD&end=YYYY-MM-DD" },
-      { status: 400 }
+      { error: "Server misconfigured: missing NTSB_CASES_BY_DATE_BASE" },
+      { status: 500 }
     );
   }
 
-  const ntsbUrl =
-    "https://api.ntsb.gov/public/api/Aviation/v1/GetCasesByDateRange" +
-    `?fromDate=${startDate}&toDate=${endDate}`;
+  // You may need to adjust parameter names to EXACTLY what Swagger uses.
+  // Common patterns: ?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD  OR  ?start=...&end=...
+  const url = new URL(base);
+  url.searchParams.set("startDate", start);
+  url.searchParams.set("endDate", end);
 
   try {
-    const res = await fetch(ntsbUrl, {
-      headers: { Accept: "application/json" },
+    const r = await fetch(url.toString(), {
+      method: "GET",
+      headers: { accept: "application/json" },
       cache: "no-store",
     });
 
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
+    const text = await r.text();
+    let json: any = null;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      // not JSON
+    }
+
+    if (!r.ok) {
       return NextResponse.json(
-        { error: `NTSB error ${res.status}`, details: text.slice(0, 500) },
-        { status: 502 }
+        { error: json?.message || json?.error || text || `HTTP ${r.status}` },
+        { status: r.status }
       );
     }
 
-    const cases = await res.json();
-
-    return NextResponse.json({
-      source: "NTSB",
-      count: Array.isArray(cases) ? cases.length : 0,
-      cases,
-      fetchedAt: new Date().toISOString(),
-    });
-  } catch (err: any) {
-    return NextResponse.json(
-      { error: err?.message ?? "Unknown server error" },
-      { status: 500 }
-    );
+    return NextResponse.json(json ?? { raw: text }, { status: 200 });
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message || String(e) }, { status: 500 });
   }
 }
