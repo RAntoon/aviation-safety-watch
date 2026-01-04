@@ -1,83 +1,114 @@
-// app/api/ntsb/route.ts
 import { NextResponse } from "next/server";
 
-function isoDate(d: Date) {
-  // YYYY-MM-DD
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(d.getUTCDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+// NTSB base (Public)
+const NTSB_BASE =
+  "https://api.ntsb.gov/public/api/Aviation/v1/GetCasesByDateRange";
+
+// YYYY-MM-DD
+function toYMD(d: Date) {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
 }
 
-function defaultRange() {
+function last12MonthsRange() {
   const end = new Date();
   const start = new Date(end);
-  start.setUTCFullYear(end.getUTCFullYear() - 1);
-  return { start: isoDate(start), end: isoDate(end) };
+  start.setFullYear(end.getFullYear() - 1);
+  return { start, end };
 }
 
-async function fetchJson(url: string) {
-  const res = await fetch(url, {
-    // Avoid caching stale results in serverless environments
-    cache: "no-store",
-    headers: {
-      "Accept": "application/json",
-      "User-Agent": "aviation-safety-watch (vercel)",
-    },
-  });
-
-  const text = await res.text();
-  let data: any = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    data = { raw: text };
-  }
-
-  return { ok: res.ok, status: res.status, data };
-}
-
-export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url);
-  const { start: defStart, end: defEnd } = defaultRange();
-
-  const start = searchParams.get("start") || defStart;
-  const end = searchParams.get("end") || defEnd;
-
-  // NTSB Public API base
-  const base = "https://api.ntsb.gov/public/api/Aviation/v1";
-
-  // Try BOTH common patterns:
-  //  1) /GetCasesByDateRange?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
-  //  2) /GetCasesByDateRange/YYYY-MM-DD/YYYY-MM-DD
-  const candidates = [
-    `${base}/GetCasesByDateRange?startDate=${encodeURIComponent(start)}&endDate=${encodeURIComponent(end)}`,
-    `${base}/GetCasesByDateRange/${encodeURIComponent(start)}/${encodeURIComponent(end)}`,
+// Try a couple parameter spellings because the swagger/docs vary by endpoint family.
+async function fetchNtsb(startYmd: string, endYmd: string) {
+  const candidates: string[] = [
+    `${NTSB_BASE}?startDate=${encodeURIComponent(startYmd)}&endDate=${encodeURIComponent(endYmd)}`,
+    `${NTSB_BASE}?StartDate=${encodeURIComponent(startYmd)}&EndDate=${encodeURIComponent(endYmd)}`,
+    `${NTSB_BASE}?from=${encodeURIComponent(startYmd)}&to=${encodeURIComponent(endYmd)}`,
   ];
 
   let lastErr: any = null;
 
   for (const url of candidates) {
-    const r = await fetchJson(url);
-    if (r.ok) {
-      return NextResponse.json({
-        ok: true,
-        source: "NTSB Public API",
-        requested: { start, end },
-        endpointUsed: url,
-        data: r.data,
+    try {
+      const res = await fetch(url, {
+        method: "GET",
+        // Some gov endpoints behave better if you send a UA + accept.
+        headers: {
+          "Accept": "application/json",
+          "User-Agent": "AviationSafetyWatch/1.0 (contact: you@example.com)",
+        },
+        cache: "no-store",
       });
+
+      const text = await res.text();
+
+      if (!res.ok) {
+        lastErr = {
+          url,
+          status: res.status,
+          statusText: res.statusText,
+          bodyPreview: text.slice(0, 500),
+        };
+        continue;
+      }
+
+      // Parse JSON safely
+      let data: any = null;
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        lastErr = { url, status: res.status, parseError: String(e), bodyPreview: text.slice(0, 500) };
+        continue;
+      }
+
+      return { ok: true as const, urlUsed: url, data };
+    } catch (e) {
+      lastErr = { url, fetchError: String(e) };
     }
-    lastErr = { endpoint: url, status: r.status, data: r.data };
+  }
+
+  return { ok: false as const, error: lastErr };
+}
+
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+
+  // client passes ?start=YYYY-MM-DD&end=YYYY-MM-DD
+  let start = searchParams.get("start") || "";
+  let end = searchParams.get("end") || "";
+
+  if (!start || !end) {
+    const r = last12MonthsRange();
+    start = toYMD(r.start);
+    end = toYMD(r.end);
+  }
+
+  const ntsb = await fetchNtsb(start, end);
+
+  if (!ntsb.ok) {
+    return NextResponse.json(
+      {
+        ok: false,
+        start,
+        end,
+        message: "NTSB fetch failed",
+        error: ntsb.error,
+      },
+      { status: 502 }
+    );
   }
 
   return NextResponse.json(
     {
-      ok: false,
+      ok: true,
+      start,
+      end,
       source: "NTSB Public API",
-      requested: { start, end },
-      error: lastErr,
+      urlUsed: ntsb.urlUsed,
+      data: ntsb.data,
+      fetchedAt: new Date().toISOString(),
     },
-    { status: 502 }
+    { status: 200 }
   );
 }
