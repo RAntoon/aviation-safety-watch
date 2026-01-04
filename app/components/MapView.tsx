@@ -1,271 +1,217 @@
-// app/components/MapView.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import dynamic from "next/dynamic";
-
-// Dynamically import react-leaflet components to avoid SSR/window issues
-const MapContainer: any = dynamic(() => import("react-leaflet").then((m) => m.MapContainer as any), { ssr: false });
-const TileLayer: any = dynamic(() => import("react-leaflet").then((m) => m.TileLayer as any), { ssr: false });
-const CircleMarker: any = dynamic(() => import("react-leaflet").then((m) => m.CircleMarker as any), { ssr: false });
-const Popup: any = dynamic(() => import("react-leaflet").then((m) => m.Popup as any), { ssr: false });
+import { MapContainer, TileLayer, CircleMarker, Popup } from "react-leaflet";
+import "leaflet/dist/leaflet.css";
 
 type NtsbPoint = {
   id: string;
-  title: string;
-  date?: string;
-  city?: string;
-  state?: string;
   lat: number;
   lon: number;
-  url?: string;
+  title: string;
+  date?: string;
+  cityState?: string;
+  ntsbNumber?: string;
 };
 
-function toISODate(d: Date) {
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(d.getUTCDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+function ymd(d: Date) {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
 }
 
-function last12MonthsRange() {
+function defaultRangeLast12Months() {
   const end = new Date();
   const start = new Date(end);
-  start.setUTCFullYear(end.getUTCFullYear() - 1);
-  return { start: toISODate(start), end: toISODate(end) };
-}
-
-// Best-effort extractor because NTSB response shape can vary across endpoints/versions
-function extractCases(payload: any): any[] {
-  if (!payload) return [];
-  if (Array.isArray(payload)) return payload;
-
-  // common wrappers
-  if (Array.isArray(payload.results)) return payload.results;
-  if (Array.isArray(payload.data)) return payload.data;
-  if (Array.isArray(payload.Cases)) return payload.Cases;
-  if (Array.isArray(payload.cases)) return payload.cases;
-
-  // sometimes nested one level down
-  if (payload.Result && Array.isArray(payload.Result)) return payload.Result;
-  if (payload.Result && Array.isArray(payload.Result.results)) return payload.Result.results;
-
-  // fallback: try to find the first array inside object
-  for (const k of Object.keys(payload)) {
-    if (Array.isArray(payload[k])) return payload[k];
-  }
-  return [];
-}
-
-function pickNumber(v: any): number | null {
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-}
-
-function normalizeToPoints(rawCases: any[]): NtsbPoint[] {
-  const out: NtsbPoint[] = [];
-
-  for (const c of rawCases) {
-    // try common fields
-    const lat =
-      pickNumber(c?.Latitude) ??
-      pickNumber(c?.latitude) ??
-      pickNumber(c?.Lat) ??
-      pickNumber(c?.lat) ??
-      null;
-
-    const lon =
-      pickNumber(c?.Longitude) ??
-      pickNumber(c?.longitude) ??
-      pickNumber(c?.Lon) ??
-      pickNumber(c?.lon) ??
-      null;
-
-    if (lat === null || lon === null) continue;
-
-    const ntsbNo =
-      c?.NtsbNumber ||
-      c?.ntsbNumber ||
-      c?.NTSBNumber ||
-      c?.CaseNumber ||
-      c?.caseNumber ||
-      c?.EventId ||
-      c?.eventId ||
-      c?.MKey ||
-      c?.mkey ||
-      c?.MKEY ||
-      "";
-
-    const date =
-      c?.EventDate ||
-      c?.eventDate ||
-      c?.OccurrenceDate ||
-      c?.occurrenceDate ||
-      c?.AccidentDate ||
-      c?.accidentDate ||
-      "";
-
-    const city = c?.City || c?.city || "";
-    const state = c?.State || c?.state || "";
-
-    const aircraft = c?.Make || c?.make || c?.AircraftMake || "";
-    const model = c?.Model || c?.model || c?.AircraftModel || "";
-    const titleParts = [
-      ntsbNo ? `NTSB ${ntsbNo}` : "NTSB Case",
-      aircraft || model ? `— ${[aircraft, model].filter(Boolean).join(" ")}` : "",
-    ].filter(Boolean);
-
-    // This is a reasonable public link pattern you can later refine:
-    // If you prefer, just remove it and only show text.
-    const url = ntsbNo ? `https://www.ntsb.gov/Pages/Results.aspx?queryId=${encodeURIComponent(ntsbNo)}` : undefined;
-
-    out.push({
-      id: String(ntsbNo || `${lat},${lon},${date}`),
-      title: titleParts.join(" "),
-      date: date ? String(date) : undefined,
-      city: city ? String(city) : undefined,
-      state: state ? String(state) : undefined,
-      lat,
-      lon,
-      url,
-    });
-  }
-
-  return out;
+  start.setFullYear(end.getFullYear() - 1);
+  return { start: ymd(start), end: ymd(end) };
 }
 
 export default function MapView() {
-  const defaults = useMemo(() => last12MonthsRange(), []);
+  const defaults = useMemo(() => defaultRangeLast12Months(), []);
   const [start, setStart] = useState(defaults.start);
   const [end, setEnd] = useState(defaults.end);
 
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string>("");
+  const [meta, setMeta] = useState<{ fetchedAt?: string; urlUsed?: string }>({});
   const [points, setPoints] = useState<NtsbPoint[]>([]);
-  const [meta, setMeta] = useState<{ endpointUsed?: string; source?: string } | null>(null);
 
   async function load() {
     setLoading(true);
-    setError(null);
+    setError("");
+    setPoints([]);
 
     try {
       const res = await fetch(`/api/ntsb?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`, {
         cache: "no-store",
       });
+
       const json = await res.json();
 
-      if (!json?.ok) {
-        setPoints([]);
-        setMeta(null);
-        setError(`NTSB fetch failed (${res.status}). Check server response in /api/ntsb.`);
+      if (!res.ok || !json?.ok) {
+        // show the useful error details in UI
+        setError(
+          `${json?.message || "Fetch failed"} (${res.status}). ${
+            json?.error?.status ? `Upstream status: ${json.error.status}. ` : ""
+          }${
+            json?.error?.bodyPreview ? `Preview: ${json.error.bodyPreview}` : ""
+          }`
+        );
         return;
       }
 
-      const rawCases = extractCases(json.data);
-      const pts = normalizeToPoints(rawCases);
+      setMeta({ fetchedAt: json.fetchedAt, urlUsed: json.urlUsed });
 
-      setPoints(pts);
-      setMeta({ endpointUsed: json.endpointUsed, source: json.source });
+      // ---- IMPORTANT ----
+      // NTSB schema can vary; we only plot points that have real coordinates.
+      // We'll try to discover common field names safely.
+
+      const raw = json.data;
+
+      // Some endpoints return { results: [...] }, some return plain array, etc.
+      const rows: any[] =
+        Array.isArray(raw) ? raw :
+        Array.isArray(raw?.results) ? raw.results :
+        Array.isArray(raw?.Result) ? raw.Result :
+        Array.isArray(raw?.data) ? raw.data :
+        [];
+
+      const mapped: NtsbPoint[] = [];
+
+      for (const r of rows) {
+        // best-effort coordinate extraction (only accept real numbers)
+        const lat =
+          Number(r?.latitude ?? r?.Latitude ?? r?.lat ?? r?.Lat ?? r?.Location?.Latitude);
+        const lon =
+          Number(r?.longitude ?? r?.Longitude ?? r?.lon ?? r?.Lon ?? r?.Location?.Longitude);
+
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+
+        const ntsbNumber =
+          String(r?.ntsbNumber ?? r?.NtsbNumber ?? r?.NTSBNumber ?? r?.caseNumber ?? r?.CaseNumber ?? "").trim() || undefined;
+
+        const date =
+          String(r?.eventDate ?? r?.EventDate ?? r?.accidentDate ?? r?.AccidentDate ?? r?.OccurrenceDate ?? "").trim() || undefined;
+
+        const city = String(r?.city ?? r?.City ?? r?.locationCity ?? "").trim();
+        const state = String(r?.state ?? r?.State ?? r?.locationState ?? "").trim();
+        const cityState = [city, state].filter(Boolean).join(", ") || undefined;
+
+        const title =
+          String(r?.airport ?? r?.Airport ?? r?.AircraftMake ?? r?.aircraftMake ?? r?.AircraftModel ?? r?.aircraftModel ?? "Aviation case").trim() ||
+          "Aviation case";
+
+        mapped.push({
+          id: ntsbNumber || `${lat},${lon},${date || ""}`,
+          lat,
+          lon,
+          title,
+          date,
+          cityState,
+          ntsbNumber,
+        });
+      }
+
+      setPoints(mapped);
+      if (mapped.length === 0) {
+        setError(
+          "NTSB returned data, but none of the cases included usable coordinates to plot. (We only plot real lat/lon.)"
+        );
+      }
     } catch (e: any) {
-      setPoints([]);
-      setMeta(null);
-      setError(e?.message || "Unknown fetch error");
+      setError(String(e?.message || e));
     } finally {
       setLoading(false);
     }
   }
 
+  // auto-load on first render
   useEffect(() => {
-    // default: last 12 months auto-load
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
-    <div style={{ height: "100vh", width: "100vw", position: "relative" }}>
-      {/* Controls */}
+    <div style={{ height: "100vh", width: "100vw" }}>
+      {/* Control panel */}
       <div
         style={{
           position: "absolute",
           zIndex: 1000,
           top: 12,
           left: 12,
-          background: "rgba(255,255,255,0.95)",
+          background: "white",
           padding: 12,
           borderRadius: 10,
-          boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+          boxShadow: "0 2px 12px rgba(0,0,0,0.12)",
           minWidth: 320,
           fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial",
+          fontSize: 14,
         }}
       >
-        <div style={{ fontWeight: 700, marginBottom: 6 }}>Aviation Safety Watch (MVP)</div>
-
-        <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 10 }}>
-          Data source: <b>NTSB Public API</b> • Default range: last 12 months
+        <div style={{ fontWeight: 800, marginBottom: 6 }}>Aviation Safety Watch (MVP)</div>
+        <div style={{ marginBottom: 8 }}>
+          Data source: <b>NTSB Public API</b> · Default range: <b>last 12 months</b>
         </div>
 
-        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <label style={{ fontSize: 12, opacity: 0.8 }}>Start</label>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10 }}>
+          <div>
+            <div style={{ fontSize: 12, opacity: 0.7 }}>Start</div>
             <input
               type="date"
               value={start}
               onChange={(e) => setStart(e.target.value)}
-              style={{ padding: "6px 8px", borderRadius: 8, border: "1px solid #ddd" }}
+              style={{ padding: 6 }}
             />
           </div>
-
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <label style={{ fontSize: 12, opacity: 0.8 }}>End</label>
+          <div>
+            <div style={{ fontSize: 12, opacity: 0.7 }}>End</div>
             <input
               type="date"
               value={end}
               onChange={(e) => setEnd(e.target.value)}
-              style={{ padding: "6px 8px", borderRadius: 8, border: "1px solid #ddd" }}
+              style={{ padding: 6 }}
             />
           </div>
-
           <button
             onClick={load}
             disabled={loading}
             style={{
-              marginTop: 18,
-              padding: "8px 10px",
-              borderRadius: 10,
+              padding: "8px 12px",
+              borderRadius: 8,
               border: "1px solid #ddd",
-              background: loading ? "#f5f5f5" : "white",
-              cursor: loading ? "default" : "pointer",
-              fontWeight: 600,
+              cursor: loading ? "not-allowed" : "pointer",
             }}
           >
             {loading ? "Loading…" : "Reload"}
           </button>
         </div>
 
-        <div style={{ fontSize: 12 }}>
-          Dots shown: <b>{points.length}</b>
-        </div>
-
-        {meta?.endpointUsed ? (
-          <div style={{ marginTop: 6, fontSize: 11, opacity: 0.75, wordBreak: "break-all" }}>
-            Endpoint used: {meta.endpointUsed}
+        <div>Dots shown: <b>{points.length}</b></div>
+        {meta.fetchedAt && (
+          <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
+            Updated: {new Date(meta.fetchedAt).toLocaleString()}
           </div>
-        ) : null}
-
-        {error ? (
-          <div style={{ marginTop: 8, fontSize: 12, color: "#b00020" }}>
+        )}
+        {error && (
+          <div style={{ marginTop: 8, color: "#b00020", whiteSpace: "pre-wrap" }}>
             {error}
           </div>
-        ) : null}
+        )}
       </div>
 
       {/* Map */}
-      <MapContainer center={[39.5, -98.35]} zoom={4} scrollWheelZoom style={{ height: "100%", width: "100%" }}>
+      <MapContainer
+        center={[39.5, -98.35]} // continental US
+        zoom={4}
+        scrollWheelZoom
+        style={{ height: "100%", width: "100%" }}
+      >
         <TileLayer
-          // OpenStreetMap tiles (map background)
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           attribution="&copy; OpenStreetMap contributors"
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
         {points.map((p) => (
@@ -276,26 +222,22 @@ export default function MapView() {
             pathOptions={{}}
           >
             <Popup>
-              <div style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial", minWidth: 220 }}>
-                <div style={{ fontWeight: 700, marginBottom: 6 }}>{p.title}</div>
-                {p.date ? <div style={{ fontSize: 12 }}>Date: {p.date}</div> : null}
-                {(p.city || p.state) ? (
-                  <div style={{ fontSize: 12 }}>
-                    Location: {[p.city, p.state].filter(Boolean).join(", ")}
+              <div style={{ minWidth: 220 }}>
+                <div style={{ fontWeight: 700 }}>{p.title}</div>
+                {p.date && <div>Date: {p.date}</div>}
+                {p.cityState && <div>Location: {p.cityState}</div>}
+                {p.ntsbNumber ? (
+                  <div style={{ marginTop: 6 }}>
+                    NTSB #: <b>{p.ntsbNumber}</b>
+                    <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
+                      (If you want, we can add a verified deep-link to the NTSB case page next.)
+                    </div>
                   </div>
-                ) : null}
-
-                <div style={{ fontSize: 12, marginTop: 6 }}>
-                  Lat/Lon: {p.lat.toFixed(4)}, {p.lon.toFixed(4)}
-                </div>
-
-                {p.url ? (
-                  <div style={{ marginTop: 8 }}>
-                    <a href={p.url} target="_blank" rel="noreferrer">
-                      Open in NTSB search
-                    </a>
+                ) : (
+                  <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
+                    No NTSB number field detected in this record.
                   </div>
-                ) : null}
+                )}
               </div>
             </Popup>
           </CircleMarker>
