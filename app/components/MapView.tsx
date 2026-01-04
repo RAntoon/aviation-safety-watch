@@ -4,42 +4,50 @@ import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 import "leaflet/dist/leaflet.css";
 
-// IMPORTANT: keep react-leaflet types, even though components are dynamically imported
-type RL = typeof import("react-leaflet");
-
-// ✅ Typed dynamic imports (this fixes the TS errors for center/zoom/attribution/etc.)
-const MapContainer = dynamic(async () => (await import("react-leaflet")).MapContainer, {
-  ssr: false,
-}) as unknown as RL["MapContainer"];
-
-const TileLayer = dynamic(async () => (await import("react-leaflet")).TileLayer, {
-  ssr: false,
-}) as unknown as RL["TileLayer"];
-
-const CircleMarker = dynamic(async () => (await import("react-leaflet")).CircleMarker, {
-  ssr: false,
-}) as unknown as RL["CircleMarker"];
-
-const Popup = dynamic(async () => (await import("react-leaflet")).Popup, {
-  ssr: false,
-}) as unknown as RL["Popup"];
+import type React from "react";
+import type {
+  MapContainerProps,
+  TileLayerProps,
+  CircleMarkerProps,
+  PopupProps,
+} from "react-leaflet";
 
 type NtsbPoint = {
   id: string;
   name: string;
-  date: string; // ISO-ish
+  date: string;
   lat: number;
   lon: number;
   url?: string;
 };
 
 function isoDateOnly(d: Date) {
-  // YYYY-MM-DD
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
+
+// ✅ Properly typed dynamic imports (this fixes the “center/zoom does not exist” TS errors)
+const MapContainer = dynamic(
+  () => import("react-leaflet").then((m) => m.MapContainer),
+  { ssr: false }
+) as unknown as React.ComponentType<MapContainerProps>;
+
+const TileLayer = dynamic(
+  () => import("react-leaflet").then((m) => m.TileLayer),
+  { ssr: false }
+) as unknown as React.ComponentType<TileLayerProps>;
+
+const CircleMarker = dynamic(
+  () => import("react-leaflet").then((m) => m.CircleMarker),
+  { ssr: false }
+) as unknown as React.ComponentType<CircleMarkerProps>;
+
+const Popup = dynamic(
+  () => import("react-leaflet").then((m) => m.Popup),
+  { ssr: false }
+) as unknown as React.ComponentType<PopupProps>;
 
 export default function MapView() {
   const today = useMemo(() => new Date(), []);
@@ -60,17 +68,19 @@ export default function MapView() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch(`/api/ntsb?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`, {
-        cache: "no-store",
-      });
+      const res = await fetch(
+        `/api/ntsb?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
+        { cache: "no-store" }
+      );
 
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
-        throw new Error(`NTSB fetch failed (${res.status}). ${txt || "Check server response in /api/ntsb."}`);
+        throw new Error(
+          `NTSB fetch failed (${res.status}). ${txt || "Check /api/ntsb server logs."}`
+        );
       }
 
       const data = (await res.json()) as { updatedAt: string; points: NtsbPoint[] };
-
       setPoints(Array.isArray(data.points) ? data.points : []);
       setUpdatedAt(data.updatedAt || new Date().toLocaleString());
     } catch (e: any) {
@@ -82,7 +92,6 @@ export default function MapView() {
     }
   }
 
-  // default load on first mount
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -92,8 +101,8 @@ export default function MapView() {
 
   return (
     <div style={{ height: "100vh", width: "100vw" }}>
-      {/* Header/controls */}
-      <div style={{ position: "absolute", zIndex: 1000, left: 12, top: 12, width: 340 }}>
+      {/* Controls */}
+      <div style={{ position: "absolute", zIndex: 1000, left: 12, top: 12, width: 360 }}>
         <div
           style={{
             background: "white",
@@ -157,12 +166,7 @@ export default function MapView() {
         />
 
         {points.map((p) => (
-          <CircleMarker
-            key={p.id}
-            center={[p.lat, p.lon]}
-            radius={6}
-            pathOptions={{ weight: 1, fillOpacity: 0.7 }}
-          >
+          <CircleMarker key={p.id} center={[p.lat, p.lon]} radius={6} pathOptions={{ weight: 1, fillOpacity: 0.7 }}>
             <Popup>
               <div style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial" }}>
                 <div style={{ fontWeight: 700, marginBottom: 4 }}>{p.name || "NTSB Case"}</div>
