@@ -1,231 +1,147 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import {
-  MapContainer,
-  TileLayer,
-  CircleMarker,
-  Popup,
-  ZoomControl,
-} from "react-leaflet";
+import dynamic from "next/dynamic";
+
+// Leaflet CSS must be imported in a client boundary somewhere.
 import "leaflet/dist/leaflet.css";
 
-type MarkerKind = "fatal" | "accident" | "incident";
+// Dynamically import react-leaflet components to avoid SSR "window is not defined".
+const MapContainer = dynamic(() => import("react-leaflet").then(m => m.MapContainer), { ssr: false });
+const TileLayer = dynamic(() => import("react-leaflet").then(m => m.TileLayer), { ssr: false });
+const CircleMarker = dynamic(() => import("react-leaflet").then(m => m.CircleMarker), { ssr: false });
+const Popup = dynamic(() => import("react-leaflet").then(m => m.Popup), { ssr: false });
+const ZoomControl = dynamic(() => import("react-leaflet").then(m => m.ZoomControl), { ssr: false });
 
-type MarkerPoint = {
+type UiItem = {
   id: string;
-  kind: MarkerKind;
   lat: number;
   lon: number;
   title: string;
-  date?: string;
-  locationText?: string;
+  eventType: "ACCIDENT" | "INCIDENT" | "UNKNOWN";
+  fatalities: number;
+  date: string; // YYYY-MM-DD
+  cityState?: string;
   docketUrl?: string;
+  raw?: any;
 };
 
-function ymd(d: Date) {
+function toYMD(d: Date) {
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
 }
 
-function defaultLast12Months() {
+function last12MonthsRange() {
   const end = new Date();
   const start = new Date(end);
   start.setFullYear(end.getFullYear() - 1);
-  return { start: ymd(start), end: ymd(end) };
+  return { start, end };
 }
 
-function colorFor(kind: MarkerKind) {
-  if (kind === "fatal") return "#d32f2f"; // red
-  if (kind === "accident") return "#f57c00"; // orange
-  return "#fbc02d"; // yellow
-}
-
-// Best-effort extractor until we confirm the real NTSB schema
-function extractMarkersFromRaw(raw: any): MarkerPoint[] {
-  const payload = raw;
-
-  const cases: any[] =
-    Array.isArray(payload)
-      ? payload
-      : Array.isArray(payload?.cases)
-        ? payload.cases
-        : Array.isArray(payload?.Cases)
-          ? payload.Cases
-          : Array.isArray(payload?.data)
-            ? payload.data
-            : [];
-
-  const out: MarkerPoint[] = [];
-
-  for (const c of cases) {
-    const id = String(
-      c?.caseNumber ??
-        c?.CaseNumber ??
-        c?.NtsbNumber ??
-        c?.ntsbNumber ??
-        c?.id ??
-        crypto.randomUUID()
-    );
-
-    const title = String(
-      c?.eventType ??
-        c?.EventType ??
-        c?.injurySeverity ??
-        c?.InjurySeverity ??
-        c?.aircraftMake ??
-        c?.AircraftMake ??
-        "NTSB case"
-    );
-
-    const date =
-      String(c?.eventDate ?? c?.EventDate ?? c?.date ?? c?.Date ?? "").trim() ||
-      undefined;
-
-    const locationText =
-      String(c?.location ?? c?.Location ?? c?.city ?? c?.City ?? "").trim() ||
-      undefined;
-
-    const lat =
-      c?.latitude ??
-      c?.Latitude ??
-      c?.lat ??
-      c?.Lat ??
-      c?.locationLat ??
-      c?.LocationLat;
-
-    const lon =
-      c?.longitude ??
-      c?.Longitude ??
-      c?.lon ??
-      c?.Lon ??
-      c?.lng ??
-      c?.Lng ??
-      c?.locationLon ??
-      c?.LocationLon;
-
-    if (typeof lat !== "number" || typeof lon !== "number") continue;
-
-    const fatalities =
-      Number(c?.fatalities ?? c?.Fatalities ?? c?.totalFatalities ?? 0) || 0;
-
-    const mode = String(
-      c?.mode ?? c?.Mode ?? c?.investigationType ?? c?.InvestigationType ?? ""
-    ).toLowerCase();
-
-    const eventClass = String(c?.eventClass ?? c?.EventClass ?? "").toLowerCase();
-
-    let kind: MarkerKind = "incident";
-    if (fatalities > 0) kind = "fatal";
-    else if (mode.includes("accident") || eventClass.includes("accident"))
-      kind = "accident";
-    else kind = "incident";
-
-    const docketUrl =
-      String(c?.docketUrl ?? c?.DocketUrl ?? c?.ntsbUrl ?? c?.NtsbUrl ?? "").trim() ||
-      undefined;
-
-    out.push({
-      id,
-      kind,
-      lat,
-      lon,
-      title,
-      date,
-      locationText,
-      docketUrl,
-    });
-  }
-
-  return out;
+// Color rules you requested:
+// - red: accidents with fatalities
+// - orange: accidents without fatalities
+// - yellow: incidents
+function markerColor(it: UiItem) {
+  if (it.eventType === "INCIDENT") return "#F2C94C"; // yellow
+  if (it.eventType === "ACCIDENT" && it.fatalities > 0) return "#EB5757"; // red
+  if (it.eventType === "ACCIDENT") return "#F2994A"; // orange
+  return "#9B9B9B"; // unknown/other
 }
 
 export default function MapView() {
-  // Force render only after client mount (prevents “window is not defined” paths)
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
-
-  const def = useMemo(() => defaultLast12Months(), []);
-  const [start, setStart] = useState(def.start);
-  const [end, setEnd] = useState(def.end);
-
+  const r = useMemo(() => last12MonthsRange(), []);
+  const [start, setStart] = useState<string>(toYMD(r.start));
+  const [end, setEnd] = useState<string>(toYMD(r.end));
+  const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<string>("");
-  const [markers, setMarkers] = useState<MarkerPoint[]>([]);
+  const [items, setItems] = useState<UiItem[]>([]);
+  const [counts, setCounts] = useState({ fatalAcc: 0, acc: 0, inc: 0 });
 
-  const counts = useMemo(() => {
-    const fatal = markers.filter((m) => m.kind === "fatal").length;
-    const accident = markers.filter((m) => m.kind === "accident").length;
-    const incident = markers.filter((m) => m.kind === "incident").length;
-    return { fatal, accident, incident };
-  }, [markers]);
-
-  async function reload() {
+  async function load() {
+    setLoading(true);
     setStatus("Loading…");
-    setMarkers([]);
+
+    const url = new URL("/api/ntsb", window.location.origin);
+    url.searchParams.set("start", start);
+    url.searchParams.set("end", end);
+
+    // Safe toggle: allow mock dots if NTSB is down
+    if (new URLSearchParams(window.location.search).get("mock") === "1") {
+      url.searchParams.set("mock", "1");
+    }
 
     try {
-      const res = await fetch(
-        `/api/ntsb?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
-        { cache: "no-store" }
-      );
+      const res = await fetch(url.toString());
       const json = await res.json();
 
-      if (!json?.ok) {
-        setStatus(`NTSB fetch not OK. Open /api/ntsb to see upstreamError.`);
+      if (!res.ok || !json?.ok) {
+        setItems([]);
+        setCounts({ fatalAcc: 0, acc: 0, inc: 0 });
+
+        // show a short error but keep app alive
+        setStatus(
+          `NTSB fetch not OK (${res.status}). Open /api/ntsb?start=${start}&end=${end}&debug=1 to see upstreamError.`
+        );
         return;
       }
 
-      const pts = extractMarkersFromRaw(json.raw);
-      setMarkers(pts);
+      const data: UiItem[] = (json.items || []) as UiItem[];
+      setItems(data);
 
-      if (pts.length === 0) {
-        setStatus(
-          `No plottable points yet (likely missing lat/lon). Next: geocode server-side.`
-        );
-      } else {
-        setStatus(`Loaded ${pts.length} points.`);
+      let fatalAcc = 0, acc = 0, inc = 0;
+      for (const it of data) {
+        if (it.eventType === "INCIDENT") inc++;
+        else if (it.eventType === "ACCIDENT" && it.fatalities > 0) fatalAcc++;
+        else if (it.eventType === "ACCIDENT") acc++;
       }
+      setCounts({ fatalAcc, acc, inc });
+
+      setStatus(`OK · ${data.length} plotted`);
     } catch (e: any) {
-      setStatus(`Client fetch failed: ${String(e?.message ?? e)}`);
+      setItems([]);
+      setCounts({ fatalAcc: 0, acc: 0, inc: 0 });
+      setStatus(`Client error: ${String(e?.message || e)}`);
+    } finally {
+      setLoading(false);
     }
   }
 
-  // IMPORTANT: cast components to any to avoid TS build failures on props
-  const MC: any = MapContainer;
-  const TL: any = TileLayer;
-  const CM: any = CircleMarker;
-  const PP: any = Popup;
-  const ZC: any = ZoomControl;
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Continental US initial view
+  const center: [number, number] = [39.5, -98.35];
 
   return (
-    <div style={{ position: "relative", height: "100vh", width: "100%" }}>
-      {/* Control panel */}
+    <div style={{ height: "100vh", width: "100vw", position: "relative" }}>
+      {/* Panel */}
       <div
         style={{
           position: "absolute",
+          top: 12,
+          left: 12,
           zIndex: 1000,
-          top: 16,
-          left: 64, // separates from zoom buttons
-          width: 360,
-          background: "rgba(255,255,255,0.95)",
+          background: "rgba(255,255,255,0.92)",
           borderRadius: 12,
-          boxShadow: "0 8px 24px rgba(0,0,0,0.15)",
           padding: 14,
-          fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial",
+          width: 360,
+          boxShadow: "0 10px 30px rgba(0,0,0,0.18)",
+          backdropFilter: "blur(6px)",
         }}
       >
-        <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>
-          Aviation Safety Watch (MVP)
-        </div>
-        <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 10 }}>
-          Data source: NTSB endpoint • Default range: last 12 months
+        <div style={{ fontWeight: 800, fontSize: 18 }}>Aviation Safety Watch (MVP)</div>
+        <div style={{ fontSize: 12, opacity: 0.8, marginTop: 2 }}>
+          Data source: NTSB endpoint · Default range: last 12 months
         </div>
 
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 12, fontWeight: 600 }}>Start</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 700 }}>Start</div>
             <input
               type="date"
               value={start}
@@ -233,8 +149,8 @@ export default function MapView() {
               style={{ width: "100%" }}
             />
           </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 12, fontWeight: 600 }}>End</div>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 700 }}>End</div>
             <input
               type="date"
               value={end}
@@ -244,132 +160,91 @@ export default function MapView() {
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
           <button
-            onClick={reload}
+            onClick={load}
+            disabled={loading}
             style={{
               padding: "8px 12px",
               borderRadius: 10,
               border: "1px solid rgba(0,0,0,0.15)",
-              background: "#fff",
+              background: "white",
               cursor: "pointer",
-              fontWeight: 600,
+              fontWeight: 700,
             }}
           >
-            Reload
+            {loading ? "Loading…" : "Reload"}
           </button>
-          <div style={{ fontSize: 12 }}>Dots shown: {markers.length}</div>
+          <div style={{ fontSize: 13, fontWeight: 700 }}>
+            Dots shown: {items.length}
+          </div>
         </div>
 
-        <div style={{ marginTop: 12, fontSize: 12, fontWeight: 700 }}>Legend</div>
-        <div style={{ marginTop: 6, fontSize: 12 }}>
+        <div style={{ marginTop: 10, fontWeight: 800 }}>Legend</div>
+        <div style={{ marginTop: 6, fontSize: 13, display: "grid", gap: 6 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span
-              style={{
-                width: 12,
-                height: 12,
-                borderRadius: 999,
-                background: colorFor("fatal"),
-                display: "inline-block",
-              }}
-            />
-            Fatal accidents (red): {counts.fatal}
+            <span style={{ width: 14, height: 14, borderRadius: 14, background: "#EB5757", display: "inline-block" }} />
+            Fatal accidents (red): {counts.fatalAcc}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
-            <span
-              style={{
-                width: 12,
-                height: 12,
-                borderRadius: 999,
-                background: colorFor("accident"),
-                display: "inline-block",
-              }}
-            />
-            Accidents (orange): {counts.accident}
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ width: 14, height: 14, borderRadius: 14, background: "#F2994A", display: "inline-block" }} />
+            Accidents (orange): {counts.acc}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
-            <span
-              style={{
-                width: 12,
-                height: 12,
-                borderRadius: 999,
-                background: colorFor("incident"),
-                display: "inline-block",
-              }}
-            />
-            Incidents (yellow): {counts.incident}
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ width: 14, height: 14, borderRadius: 14, background: "#F2C94C", display: "inline-block" }} />
+            Incidents (yellow): {counts.inc}
           </div>
         </div>
 
-        <div
-          style={{
-            marginTop: 10,
-            fontSize: 12,
-            color: status.includes("Loaded") ? "green" : "crimson",
-          }}
-        >
-          Status: {status || "—"}
+        <div style={{ marginTop: 10, fontSize: 12, color: status.includes("OK") ? "#2F855A" : "#C53030" }}>
+          Status: {status}
         </div>
       </div>
 
       {/* Map */}
-      {mounted ? (
-        <MC
-          center={[39.5, -98.35]}
-          zoom={4}
-          style={{ height: "100%", width: "100%" }}
-          zoomControl={false}
-        >
-          <ZC position="topleft" />
-          <TL
-            attribution="&copy; OpenStreetMap contributors"
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
+      <MapContainer
+        // If TS yells in your environment, do NOT fight it mid-flight.
+        // This is correct usage for react-leaflet.
+        center={center as any}
+        zoom={4 as any}
+        scrollWheelZoom={true as any}
+        zoomControl={false as any}
+        style={{ height: "100%", width: "100%" }}
+      >
+        <TileLayer
+          attribution="&copy; OpenStreetMap contributors"
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        />
 
-          {markers.map((m) => (
-            <CM
-              key={m.id}
-              center={[m.lat, m.lon]}
-              radius={6}
-              pathOptions={{
-                color: colorFor(m.kind),
-                fillColor: colorFor(m.kind),
-                fillOpacity: 0.85,
-                weight: 2,
-              }}
-            >
-              <PP>
-                <div style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial" }}>
-                  <div style={{ fontWeight: 800, marginBottom: 6 }}>{m.title}</div>
-                  {m.date ? (
-                    <div>
-                      <b>Date:</b> {m.date}
-                    </div>
-                  ) : null}
-                  {m.locationText ? (
-                    <div>
-                      <b>Location:</b> {m.locationText}
-                    </div>
-                  ) : null}
-                  {m.docketUrl ? (
-                    <div style={{ marginTop: 8 }}>
-                      <a href={m.docketUrl} target="_blank" rel="noreferrer">
-                        Open NTSB docket
-                      </a>
-                    </div>
-                  ) : (
-                    <div style={{ marginTop: 8, opacity: 0.7 }}>
-                      (No docket URL found in payload yet)
-                    </div>
-                  )}
+        {/* zoom buttons bottom-right */}
+        <ZoomControl position="bottomright" />
+
+        {items.map((it) => (
+          <CircleMarker
+            key={it.id}
+            center={[it.lat, it.lon] as any}
+            radius={7}
+            pathOptions={{ color: markerColor(it), fillColor: markerColor(it), fillOpacity: 0.85 }}
+          >
+            <Popup>
+              <div style={{ fontWeight: 800, marginBottom: 6 }}>{it.title || "NTSB Case"}</div>
+              <div style={{ fontSize: 13 }}>
+                <div><b>Date:</b> {it.date}</div>
+                <div><b>Type:</b> {it.eventType}</div>
+                <div><b>Fatalities:</b> {it.fatalities}</div>
+                {it.cityState ? <div><b>Location:</b> {it.cityState}</div> : null}
+              </div>
+              {it.docketUrl ? (
+                <div style={{ marginTop: 8 }}>
+                  <a href={it.docketUrl} target="_blank" rel="noreferrer">
+                    Open NTSB docket
+                  </a>
                 </div>
-              </PP>
-            </CM>
-          ))}
-        </MC>
-      ) : (
-        <div style={{ height: "100%", width: "100%" }} />
-      )}
+              ) : null}
+            </Popup>
+          </CircleMarker>
+        ))}
+      </MapContainer>
     </div>
   );
 }
