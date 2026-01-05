@@ -2,66 +2,53 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-function fmtZulu(utcIso: string) {
-  const d = new Date(utcIso);
-  // Example: 22:14:03Z
+function formatZulu(iso: string) {
+  const d = new Date(iso);
   const hh = String(d.getUTCHours()).padStart(2, "0");
   const mm = String(d.getUTCMinutes()).padStart(2, "0");
   const ss = String(d.getUTCSeconds()).padStart(2, "0");
   return `${hh}:${mm}:${ss}Z`;
 }
 
-function fmtLocal(d: Date) {
-  return d.toLocaleString(undefined, {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-}
-
 export default function ClockWidget() {
-  const [utcIso, setUtcIso] = useState<string>(new Date().toISOString());
-  const [localNow, setLocalNow] = useState<Date>(new Date());
-  const [source, setSource] = useState<string>("loading…");
+  const [utcIso, setUtcIso] = useState(new Date().toISOString());
+  const [localNow, setLocalNow] = useState(new Date());
+  const [source, setSource] = useState("loading");
 
-  // Update local display every second (fast, no network)
+  // Update local clock every second
   useEffect(() => {
     const t = setInterval(() => setLocalNow(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
 
-  // Refresh “official” UTC periodically (slow, network)
+  // Refresh authoritative UTC once per minute
   useEffect(() => {
     let mounted = true;
 
-    async function pull() {
+    async function refresh() {
       try {
         const res = await fetch("/api/time", { cache: "no-store" });
-        const j = await res.json();
+        const json = await res.json();
         if (!mounted) return;
 
-        if (j?.utcIso) setUtcIso(String(j.utcIso));
-        setSource(j?.source ? String(j.source) : "unknown");
+        setUtcIso(json.utcIso);
+        setSource(json.source);
       } catch {
         if (!mounted) return;
         setUtcIso(new Date().toISOString());
-        setSource("fallback (client clock)");
+        setSource("fallback");
       }
     }
 
-    pull();
-    const t = setInterval(pull, 60_000); // refresh once/min
+    refresh();
+    const t = setInterval(refresh, 60000);
     return () => {
       mounted = false;
       clearInterval(t);
     };
   }, []);
 
-  const zulu = useMemo(() => fmtZulu(utcIso), [utcIso]);
-  const local = useMemo(() => fmtLocal(localNow), [localNow]);
+  const zulu = useMemo(() => formatZulu(utcIso), [utcIso]);
 
   return (
     <div
@@ -70,37 +57,32 @@ export default function ClockWidget() {
         top: 12,
         right: 12,
         zIndex: 1000,
-        background: "rgba(255,255,255,0.92)",
-        backdropFilter: "blur(6px)",
-        border: "1px solid rgba(0,0,0,0.08)",
+        background: "rgba(255,255,255,0.95)",
         borderRadius: 12,
         padding: "10px 12px",
-        minWidth: 210,
-        boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
-        fontFamily:
-          'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial',
+        boxShadow: "0 8px 24px rgba(0,0,0,0.15)",
+        fontFamily: "system-ui, sans-serif",
+        minWidth: 200,
       }}
     >
-      <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 6 }}>
+      <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>
         Time
       </div>
 
-      <div style={{ display: "grid", gap: 6 }}>
-        <div>
-          <div style={{ fontSize: 12, opacity: 0.75 }}>Zulu (UTC)</div>
-          <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: 0.5 }}>
-            {zulu}
-          </div>
-        </div>
+      <div style={{ marginBottom: 6 }}>
+        <div style={{ fontSize: 12, opacity: 0.7 }}>Zulu (UTC)</div>
+        <div style={{ fontSize: 18, fontWeight: 800 }}>{zulu}</div>
+      </div>
 
-        <div>
-          <div style={{ fontSize: 12, opacity: 0.75 }}>Local</div>
-          <div style={{ fontSize: 14, fontWeight: 700 }}>{local}</div>
+      <div style={{ marginBottom: 4 }}>
+        <div style={{ fontSize: 12, opacity: 0.7 }}>Local</div>
+        <div style={{ fontSize: 14, fontWeight: 700 }}>
+          {localNow.toLocaleString()}
         </div>
+      </div>
 
-        <div style={{ fontSize: 11, opacity: 0.6, marginTop: 2 }}>
-          Source: {source}
-        </div>
+      <div style={{ fontSize: 11, opacity: 0.6 }}>
+        Source: {source}
       </div>
     </div>
   );
