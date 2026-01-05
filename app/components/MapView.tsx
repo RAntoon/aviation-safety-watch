@@ -47,6 +47,7 @@ function last12MonthsRange() {
   start.setFullYear(end.getFullYear() - 1);
   return { start, end };
 }
+
 function colorFor(kind: PointKind) {
   if (kind === "fatal") return "#d32f2f"; // red
   if (kind === "accident") return "#fb8c00"; // orange
@@ -122,6 +123,9 @@ export default function MapView() {
 
   return (
     <div style={{ height: "100vh", width: "100vw", position: "relative" }}>
+      {/* ✅ NEW: Clock in the upper-right */}
+      <ClockWidget />
+
       {/* Control panel */}
       <div
         style={{
@@ -255,7 +259,7 @@ export default function MapView() {
         <ZoomControl position="bottomright" />
 
         <TileLayer
-          attribution='&copy; OpenStreetMap contributors'
+          attribution="&copy; OpenStreetMap contributors"
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
@@ -282,11 +286,14 @@ export default function MapView() {
                 </div>
 
                 <div style={{ fontSize: 13, marginBottom: 6 }}>
-                  {p.date ? <div><b>Date:</b> {p.date}</div> : null}
-                  {(p.city || p.state || p.country) ? (
+                  {p.date ? (
                     <div>
-                      <b>Location:</b>{" "}
-                      {[p.city, p.state, p.country].filter(Boolean).join(", ")}
+                      <b>Date:</b> {p.date}
+                    </div>
+                  ) : null}
+                  {p.city || p.state || p.country ? (
+                    <div>
+                      <b>Location:</b> {[p.city, p.state, p.country].filter(Boolean).join(", ")}
                     </div>
                   ) : null}
                   {p.ntsbCaseId ? (
@@ -297,9 +304,7 @@ export default function MapView() {
                 </div>
 
                 {p.summary ? (
-                  <div style={{ fontSize: 12, opacity: 0.9, marginBottom: 8 }}>
-                    {p.summary}
-                  </div>
+                  <div style={{ fontSize: 12, opacity: 0.9, marginBottom: 8 }}>{p.summary}</div>
                 ) : null}
 
                 {p.docketUrl ? (
@@ -307,9 +312,7 @@ export default function MapView() {
                     Open NTSB docket →
                   </a>
                 ) : (
-                  <div style={{ fontSize: 12, opacity: 0.75 }}>
-                    (No docket link provided by API yet)
-                  </div>
+                  <div style={{ fontSize: 12, opacity: 0.75 }}>(No docket link provided by API yet)</div>
                 )}
               </div>
             </Popup>
