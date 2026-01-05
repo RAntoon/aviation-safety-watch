@@ -10,5 +10,5 @@ const MapView = dynamic(() => import("./components/MapView"), {
 });
 
 export default function Page() {
-  return <MapView />;
+  return1 <MapView />;
 }
