@@ -1,14 +1,7 @@
 import { NextResponse } from "next/server";
 
-export const runtime = "nodejs"; // IMPORTANT: avoid Edge runtime fetch quirks
-export const dynamic = "force-dynamic";
-
 const NTSB_BASE =
   "https://api.ntsb.gov/public/api/Aviation/v1/GetCasesByDateRange";
-
-function isYmd(s: string) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(s);
-}
 
 function toYMD(d: Date) {
   const yyyy = d.getFullYear();
@@ -21,29 +14,25 @@ function last12MonthsRange() {
   const end = new Date();
   const start = new Date(end);
   start.setFullYear(end.getFullYear() - 1);
-  return { start, end };
+  return { start: toYMD(start), end: toYMD(end) };
 }
 
-async function fetchWithTimeout(url: string, ms = 15000) {
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), ms);
-
-  try {
-    const res = await fetch(url, {
-      method: "GET",
-      // keep headers minimal; some environments get picky
-      headers: { Accept: "application/json" },
-      cache: "no-store",
-      signal: controller.signal,
-    });
-    const text = await res.text();
-    return { res, text };
-  } finally {
-    clearTimeout(t);
-  }
+function parseYMD(s: string) {
+  // Expect YYYY-MM-DD
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return null;
+  const d = new Date(`${s}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return null;
+  return d;
 }
 
-async function fetchNtsb(startYmd: string, endYmd: string) {
+function daysBetween(a: Date, b: Date) {
+  const ms = b.getTime() - a.getTime();
+  return Math.ceil(ms / (1000 * 60 * 60 * 24));
+}
+
+async function fetchNtsbOnce(startYmd: string, endYmd: string) {
+  // Try common param spellings (their docs can be inconsistent across endpoints)
   const candidates = [
     `${NTSB_BASE}?startDate=${encodeURIComponent(startYmd)}&endDate=${encodeURIComponent(endYmd)}`,
     `${NTSB_BASE}?StartDate=${encodeURIComponent(startYmd)}&EndDate=${encodeURIComponent(endYmd)}`,
@@ -54,39 +43,56 @@ async function fetchNtsb(startYmd: string, endYmd: string) {
 
   for (const url of candidates) {
     try {
-      const { res, text } = await fetchWithTimeout(url, 15000);
+      const res = await fetch(url, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "AviationSafetyWatch/1.0",
+        },
+        cache: "no-store",
+      });
+
+      const text = await res.text();
 
       if (!res.ok) {
         lastErr = {
           url,
           status: res.status,
           statusText: res.statusText,
-          bodyPreview: text.slice(0, 800),
+          bodyPreview: text.slice(0, 600),
         };
         continue;
       }
 
-      // Parse JSON safely
       let data: any = null;
       try {
         data = JSON.parse(text);
       } catch (e) {
-        lastErr = {
-          url,
-          status: res.status,
-          parseError: String(e),
-          bodyPreview: text.slice(0, 800),
-        };
+        lastErr = { url, parseError: String(e), bodyPreview: text.slice(0, 600) };
         continue;
       }
 
       return { ok: true as const, urlUsed: url, data };
-    } catch (e) {
+    } catch (e: any) {
       lastErr = { url, fetchError: String(e) };
     }
   }
 
   return { ok: false as const, error: lastErr };
+}
+
+function normalizeToArray(payload: any): any[] {
+  // Sometimes APIs return {data:[...]} or {..., Cases:[...]} etc.
+  if (Array.isArray(payload)) return payload;
+
+  const keysToTry = ["data", "Data", "cases", "Cases", "results", "Results", "Items", "items"];
+  for (const k of keysToTry) {
+    const v = payload?.[k];
+    if (Array.isArray(v)) return v;
+  }
+
+  // As a last resort: if it’s an object but not an array, return empty
+  return [];
 }
 
 export async function GET(req: Request) {
@@ -97,36 +103,86 @@ export async function GET(req: Request) {
 
   if (!start || !end) {
     const r = last12MonthsRange();
-    start = toYMD(r.start);
-    end = toYMD(r.end);
+    start = r.start;
+    end = r.end;
   }
 
-  // validate (prevents bad date strings from causing upstream weirdness)
-  if (!isYmd(start) || !isYmd(end)) {
+  const startD = parseYMD(start);
+  const endD = parseYMD(end);
+
+  if (!startD || !endD) {
     return NextResponse.json(
       {
         ok: false,
-        message: "Invalid date format. Use YYYY-MM-DD.",
         start,
         end,
+        message: "Invalid date format. Use YYYY-MM-DD.",
       },
       { status: 400 }
     );
   }
 
-  const ntsb = await fetchNtsb(start, end);
-
-  if (!ntsb.ok) {
+  if (endD < startD) {
     return NextResponse.json(
       {
         ok: false,
         start,
         end,
-        message: "NTSB fetch failed",
-        error: ntsb.error,
+        message: "End must be >= start.",
       },
-      { status: 502 }
+      { status: 400 }
     );
+  }
+
+  // Chunk large ranges to avoid NTSB 502/timeouts
+  const totalDays = daysBetween(startD, endD);
+  const chunkDays = 90;
+
+  const allRows: any[] = [];
+  let urlUsed = "";
+
+  if (totalDays <= chunkDays) {
+    const r = await fetchNtsbOnce(start, end);
+    if (!r.ok) {
+      return NextResponse.json(
+        { ok: false, start, end, message: "NTSB fetch failed", error: r.error },
+        { status: 502 }
+      );
+    }
+    urlUsed = r.urlUsed;
+    allRows.push(...normalizeToArray(r.data));
+  } else {
+    let cursor = new Date(startD);
+    while (cursor <= endD) {
+      const chunkStart = toYMD(cursor);
+      const next = new Date(cursor);
+      next.setDate(next.getDate() + chunkDays);
+      if (next > endD) next.setTime(endD.getTime());
+      const chunkEnd = toYMD(next);
+
+      const r = await fetchNtsbOnce(chunkStart, chunkEnd);
+      if (!r.ok) {
+        return NextResponse.json(
+          {
+            ok: false,
+            start,
+            end,
+            message: "NTSB fetch failed (chunked request)",
+            failedChunk: { chunkStart, chunkEnd },
+            error: r.error,
+          },
+          { status: 502 }
+        );
+      }
+
+      urlUsed = r.urlUsed;
+      allRows.push(...normalizeToArray(r.data));
+
+      // advance cursor by 1 day past chunkEnd to avoid infinite loops
+      const advance = new Date(next);
+      advance.setDate(advance.getDate() + 1);
+      cursor = advance;
+    }
   }
 
   return NextResponse.json(
@@ -135,8 +191,9 @@ export async function GET(req: Request) {
       start,
       end,
       source: "NTSB Public API",
-      urlUsed: ntsb.urlUsed,
-      data: ntsb.data,
+      urlUsed,
+      count: allRows.length,
+      data: allRows,
       fetchedAt: new Date().toISOString(),
     },
     { status: 200 }
