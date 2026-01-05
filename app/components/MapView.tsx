@@ -1,7 +1,7 @@
+// @ts-nocheck
 "use client";
 
 /* eslint-disable @next/next/no-img-element */
-// @ts-nocheck
 
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -42,15 +42,11 @@ function last12MonthsRange() {
 }
 
 function colorFor(p: NtsbPoint) {
-  // Your scheme:
-  // red = accidents with fatalities
-  // orange = accidents without fatalities
-  // yellow = incidents
   const isIncident =
     String(p.eventType || "").toUpperCase() === "INCIDENT" ||
     String(p.eventType || "").toUpperCase().includes("INCIDENT");
 
-  if (isIncident) return "#f5c542"; // yellow-ish
+  if (isIncident) return "#f5c542"; // yellow
   const fat = Number(p.fatalities || 0);
   if (fat > 0) return "#d83a3a"; // red
   return "#f08a24"; // orange
@@ -92,7 +88,6 @@ export default function MapView() {
       const pts: NtsbPoint[] = json.points || [];
       setPoints(pts);
 
-      // compute legend counts
       let fatalAccidents = 0;
       let nonFatalAccidents = 0;
       let incidents = 0;
@@ -251,13 +246,13 @@ export default function MapView() {
 
       {/* Map */}
       <MapContainer
-        center={[39.5, -98.35]} // continental US
+        center={[39.5, -98.35]}
         zoom={4}
         style={{ height: "100%", width: "100%" }}
         scrollWheelZoom
-        zoomControl={false} // we’ll place it elsewhere so it doesn't overlap the panel
+        zoomControl={false}
       >
-        {/* Put zoom controls bottom-right to separate from your top-left panel */}
+        {/* Separate zoom controls from the top-left panel */}
         <ZoomControl position="bottomright" />
 
         <TileLayer
