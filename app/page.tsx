@@ -1,14 +1,11 @@
 import dynamic from "next/dynamic";
 
-const MapView = dynamic(() => import("./components/MapView"), {
-  ssr: false,
-  loading: () => (
-    <div style={{ padding: 16, fontFamily: "system-ui, sans-serif" }}>
-      Loading map…
-    </div>
-  ),
-});
+const MapView = dynamic(() => import("./components/MapView"), { ssr: false });
 
-export default function Page() {
-  return <MapView />;
+export default function Home() {
+  return (
+    <main style={{ height: "100vh", width: "100vw" }}>
+      <MapView />
+    </main>
+  );
 }
