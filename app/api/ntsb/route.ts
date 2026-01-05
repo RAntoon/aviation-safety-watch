@@ -1,14 +1,19 @@
 import { NextResponse } from "next/server";
 
-export const runtime = "nodejs"; // important: avoid edge quirks
-export const dynamic = "force-dynamic"; // ensure no weird caching
+export const runtime = "nodejs"; // safer for fetch + timeouts
 
-// NOTE: If this endpoint is truly public in your environment, this may work.
-// If it requires a key, you'll see that clearly in the returned debug JSON.
+// NTSB base (Public)
 const NTSB_BASE =
   "https://api.ntsb.gov/public/api/Aviation/v1/GetCasesByDateRange";
 
-// YYYY-MM-DD
+// For geocoding (free, but rate-limited). We will CAP requests per call.
+const NOMINATIM_BASE = "https://nominatim.openstreetmap.org/search";
+
+type LatLon = { lat: number; lon: number };
+
+// Small in-memory cache (works within a warm serverless instance)
+const geocodeCache = new Map<string, LatLon>();
+
 function toYMD(d: Date) {
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
@@ -23,8 +28,37 @@ function last12MonthsRange() {
   return { start, end };
 }
 
-async function fetchNtsbRaw(startYmd: string, endYmd: string) {
-  // Some APIs vary param names; we try a few.
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+async function fetchWithTimeout(url: string, ms = 15000) {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), ms);
+
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        // Put a real URL/contact here (some gov endpoints behave better with this)
+        "User-Agent":
+          "AviationSafetyWatch/1.0 (https://aviationsafetywatch.com)",
+      },
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    const text = await res.text();
+    return { res, text };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+/**
+ * Try a few parameter spellings because docs vary.
+ */
+async function fetchNtsb(startYmd: string, endYmd: string) {
   const candidates: string[] = [
     `${NTSB_BASE}?startDate=${encodeURIComponent(startYmd)}&endDate=${encodeURIComponent(endYmd)}`,
     `${NTSB_BASE}?StartDate=${encodeURIComponent(startYmd)}&EndDate=${encodeURIComponent(endYmd)}`,
@@ -34,54 +68,193 @@ async function fetchNtsbRaw(startYmd: string, endYmd: string) {
   let lastErr: any = null;
 
   for (const url of candidates) {
-    try {
-      const res = await fetch(url, {
-        method: "GET",
-        headers: {
-          Accept: "application/json",
-          // Some gov endpoints behave better with a UA
-          "User-Agent": "AviationSafetyWatch/1.0 (contact: you@example.com)",
-        },
-        cache: "no-store",
-      });
-
-      const text = await res.text();
-
-      // Try parse JSON even if non-200 (so we can see message)
-      let parsed: any = null;
+    // retry a couple times per candidate (handles flakey upstream)
+    for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        parsed = text ? JSON.parse(text) : null;
-      } catch {
-        parsed = null;
-      }
+        const { res, text } = await fetchWithTimeout(url, 15000);
 
-      if (!res.ok) {
-        lastErr = {
-          triedUrl: url,
-          upstreamStatus: res.status,
-          upstreamStatusText: res.statusText,
-          bodyPreview: text?.slice(0, 800) ?? "",
-          parsed,
-        };
-        continue;
-      }
+        if (!res.ok) {
+          lastErr = {
+            url,
+            status: res.status,
+            statusText: res.statusText,
+            bodyPreview: text.slice(0, 800),
+          };
+          // tiny backoff before retry
+          await sleep(400 * (attempt + 1));
+          continue;
+        }
 
-      return {
-        ok: true as const,
-        usedUrl: url,
-        upstreamStatus: res.status,
-        data: parsed ?? text,
-      };
-    } catch (e: any) {
-      lastErr = {
-        triedUrl: url,
-        fetchError: String(e?.message ?? e),
-      };
-      continue;
+        // Parse JSON safely
+        let data: any = null;
+        try {
+          data = JSON.parse(text);
+        } catch (e) {
+          lastErr = {
+            url,
+            status: res.status,
+            parseError: String(e),
+            bodyPreview: text.slice(0, 800),
+          };
+          await sleep(400 * (attempt + 1));
+          continue;
+        }
+
+        return { ok: true as const, urlUsed: url, data };
+      } catch (e: any) {
+        lastErr = { url, fetchError: String(e?.message ?? e) };
+        await sleep(400 * (attempt + 1));
+      }
     }
   }
 
   return { ok: false as const, error: lastErr };
+}
+
+/**
+ * Extract lat/lon from a case if present (field names vary).
+ */
+function extractLatLon(c: any): LatLon | null {
+  const lat =
+    c?.Latitude ??
+    c?.latitude ??
+    c?.Lat ??
+    c?.lat ??
+    c?.LocationLatitude ??
+    null;
+  const lon =
+    c?.Longitude ??
+    c?.longitude ??
+    c?.Lon ??
+    c?.lon ??
+    c?.LocationLongitude ??
+    null;
+
+  const latNum = typeof lat === "string" ? Number(lat) : lat;
+  const lonNum = typeof lon === "string" ? Number(lon) : lon;
+
+  if (
+    typeof latNum === "number" &&
+    typeof lonNum === "number" &&
+    Number.isFinite(latNum) &&
+    Number.isFinite(lonNum)
+  ) {
+    return { lat: latNum, lon: lonNum };
+  }
+
+  return null;
+}
+
+/**
+ * Build a reasonable “place string” for geocoding.
+ * (Your upstream may include City/State or a Location field.)
+ */
+function extractPlaceString(c: any): string | null {
+  const raw =
+    c?.Location ??
+    c?.location ??
+    c?.City ??
+    c?.city ??
+    c?.EventCity ??
+    c?.EventState ??
+    null;
+
+  if (typeof raw === "string" && raw.trim()) return raw.trim();
+
+  // If we have City + State
+  const city = (c?.City ?? c?.city ?? c?.EventCity ?? "").toString().trim();
+  const state = (c?.State ?? c?.state ?? c?.EventState ?? "").toString().trim();
+
+  const combo = [city, state].filter(Boolean).join(", ");
+  return combo ? combo : null;
+}
+
+async function geocode(place: string) {
+  const key = place.toLowerCase();
+  if (geocodeCache.has(key)) return geocodeCache.get(key)!;
+
+  const url =
+    `${NOMINATIM_BASE}?format=jsonv2&limit=1&q=` + encodeURIComponent(place);
+
+  const { res, text } = await fetchWithTimeout(url, 12000);
+  if (!res.ok) return null;
+
+  let data: any;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return null;
+  }
+
+  const first = Array.isArray(data) ? data[0] : null;
+  const lat = first?.lat ? Number(first.lat) : null;
+  const lon = first?.lon ? Number(first.lon) : null;
+
+  if (
+    typeof lat === "number" &&
+    typeof lon === "number" &&
+    Number.isFinite(lat) &&
+    Number.isFinite(lon)
+  ) {
+    const out = { lat, lon };
+    geocodeCache.set(key, out);
+    return out;
+  }
+
+  return null;
+}
+
+/**
+ * Try to classify:
+ * - red: accidents with fatalities
+ * - orange: accidents without fatalities
+ * - yellow: incidents
+ *
+ * We do “best effort” because field names vary.
+ */
+function classify(c: any): "fatal_accident" | "accident" | "incident" {
+  const fatalities =
+    c?.Fatalities ??
+    c?.fatalities ??
+    c?.TotalFatalInjuries ??
+    c?.totalFatalInjuries ??
+    0;
+
+  const fatNum = typeof fatalities === "string" ? Number(fatalities) : fatalities;
+
+  if (typeof fatNum === "number" && fatNum > 0) return "fatal_accident";
+
+  const eventType = (c?.EventType ?? c?.eventType ?? c?.Type ?? "")
+    .toString()
+    .toLowerCase();
+
+  // common-ish heuristics
+  if (eventType.includes("incident") || eventType === "inc") return "incident";
+
+  // default to accident if not clearly incident
+  return "accident";
+}
+
+/**
+ * Build a docket link if we can.
+ * NTSB dockets are commonly accessible via data.ntsb.gov.  [oai_citation:0‡NTSB](https://www.ntsb.gov/Pages/Open.aspx?utm_source=chatgpt.com)
+ */
+function buildDocketUrl(c: any): string | null {
+  const projectId =
+    c?.ProjectId ??
+    c?.projectId ??
+    c?.ProjectID ??
+    c?.projectID ??
+    c?.DocketId ??
+    c?.docketId ??
+    null;
+
+  if (projectId == null) return null;
+
+  const pid = String(projectId).trim();
+  if (!pid) return null;
+
+  return `https://data.ntsb.gov/Docket?ProjectID=${encodeURIComponent(pid)}`;
 }
 
 export async function GET(req: Request) {
@@ -97,23 +270,114 @@ export async function GET(req: Request) {
     end = toYMD(r.end);
   }
 
-  const ntsb = await fetchNtsbRaw(start, end);
+  const ntsb = await fetchNtsb(start, end);
 
-  // IMPORTANT: Always 200 so UI can show the debug object instead of “502 failed”
-  return NextResponse.json({
-    ok: ntsb.ok,
-    start,
-    end,
-    source: "NTSB endpoint attempt",
-    ...(ntsb.ok
-      ? {
-          upstreamStatus: ntsb.upstreamStatus,
-          urlUsed: ntsb.usedUrl,
-          raw: ntsb.data,
+  if (!ntsb.ok) {
+    // IMPORTANT: return upstreamError so you can debug from the browser
+    return NextResponse.json(
+      {
+        ok: false,
+        start,
+        end,
+        message: "NTSB upstream fetch failed",
+        upstreamError: ntsb.error,
+      },
+      { status: 502 }
+    );
+  }
+
+  // The NTSB response shape may be array OR wrapped object.
+  // We'll try to find an array of cases.
+  let cases: any[] = [];
+  if (Array.isArray(ntsb.data)) {
+    cases = ntsb.data;
+  } else if (Array.isArray(ntsb.data?.data)) {
+    cases = ntsb.data.data;
+  } else if (Array.isArray(ntsb.data?.Cases)) {
+    cases = ntsb.data.Cases;
+  } else if (Array.isArray(ntsb.data?.cases)) {
+    cases = ntsb.data.cases;
+  }
+
+  // Geocode: cap per request to avoid timeouts / rate limits
+  const MAX_GEOCODES_PER_CALL = 40;
+  let geocodedCount = 0;
+  let geocodeSkipped = 0;
+
+  const normalized = [];
+  for (const c of cases) {
+    const existing = extractLatLon(c);
+    let coords = existing;
+
+    if (!coords) {
+      const place = extractPlaceString(c);
+      if (place) {
+        if (geocodedCount < MAX_GEOCODES_PER_CALL) {
+          // polite: sleep a bit between requests
+          await sleep(250);
+          coords = await geocode(place);
+          geocodedCount++;
+        } else {
+          geocodeSkipped++;
         }
-      : {
-          upstreamError: ntsb.error,
-        }),
-    fetchedAt: new Date().toISOString(),
-  });
+      }
+    }
+
+    const kind = classify(c);
+
+    normalized.push({
+      // raw-ish identifiers (vary by upstream)
+      id:
+        c?.CaseId ??
+        c?.caseId ??
+        c?.NtsbNumber ??
+        c?.ntsbNumber ??
+        c?.EventId ??
+        c?.eventId ??
+        crypto.randomUUID(),
+      kind, // fatal_accident | accident | incident
+      lat: coords?.lat ?? null,
+      lon: coords?.lon ?? null,
+      place: extractPlaceString(c),
+      date:
+        c?.EventDate ??
+        c?.eventDate ??
+        c?.OccurrenceDate ??
+        c?.occurrenceDate ??
+        null,
+      // Keep a small “card” worth of fields to show in the popup
+      title:
+        c?.NtsbNumber ??
+        c?.ntsbNumber ??
+        c?.EventType ??
+        c?.eventType ??
+        "NTSB case",
+      docketUrl: buildDocketUrl(c),
+      // If you want more fields in your popup later, add them here:
+      summary: c?.Narrative ?? c?.narrative ?? c?.Synopsis ?? c?.synopsis ?? null,
+      fatalities:
+        c?.Fatalities ??
+        c?.fatalities ??
+        c?.TotalFatalInjuries ??
+        c?.totalFatalInjuries ??
+        0,
+      raw: c, // optional (handy for dev; remove later if you want smaller payloads)
+    });
+  }
+
+  return NextResponse.json(
+    {
+      ok: true,
+      start,
+      end,
+      source: "NTSB public endpoint",
+      urlUsed: ntsb.urlUsed,
+      count: normalized.length,
+      geocodedCount,
+      geocodeSkipped,
+      data: normalized,
+      fetchedAt: new Date().toISOString(),
+    },
+    { status: 200 }
+  );
 }
