@@ -47,13 +47,6 @@ function last12MonthsRange() {
   start.setFullYear(end.getFullYear() - 1);
   return { start, end };
 }
-return (
-  <div style={{ position: "relative", height: "100vh", width: "100vw" }}>
-    <ClockWidget />
-    {/* your existing overlay panel */}
-    {/* your existing Leaflet MapContainer */}
-  </div>
-);
 function colorFor(kind: PointKind) {
   if (kind === "fatal") return "#d32f2f"; // red
   if (kind === "accident") return "#fb8c00"; // orange
