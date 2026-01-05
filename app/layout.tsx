@@ -1,3 +1,4 @@
+import "leaflet/dist/leaflet.css";
 // app/layout.tsx
 export const metadata = {
   title: "Aviation Safety Watch",
