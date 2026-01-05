@@ -3,30 +3,42 @@
 import React, { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 
-// Leaflet CSS must be imported in a client boundary somewhere.
+// Leaflet CSS (make sure this exists somewhere globally too; safe here for MVP)
 import "leaflet/dist/leaflet.css";
 
-// Dynamically import react-leaflet components to avoid SSR "window is not defined".
-const MapContainer = dynamic(() => import("react-leaflet").then(m => m.MapContainer), { ssr: false });
-const TileLayer = dynamic(() => import("react-leaflet").then(m => m.TileLayer), { ssr: false });
-const CircleMarker = dynamic(() => import("react-leaflet").then(m => m.CircleMarker), { ssr: false });
-const Popup = dynamic(() => import("react-leaflet").then(m => m.Popup), { ssr: false });
-const ZoomControl = dynamic(() => import("react-leaflet").then(m => m.ZoomControl), { ssr: false });
+// Dynamically import react-leaflet components (client-only)
+const MapContainer = dynamic(() => import("react-leaflet").then((m) => m.MapContainer), { ssr: false });
+const TileLayer = dynamic(() => import("react-leaflet").then((m) => m.TileLayer), { ssr: false });
+const Marker = dynamic(() => import("react-leaflet").then((m) => m.Marker), { ssr: false });
+const Popup = dynamic(() => import("react-leaflet").then((m) => m.Popup), { ssr: false });
+const ZoomControl = dynamic(() => import("react-leaflet").then((m) => m.ZoomControl), { ssr: false });
 
-type UiItem = {
+// Leaflet icon fix for Next builds
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
+
+// @ts-ignore
+delete (L.Icon.Default.prototype as any)._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
+  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
+  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
+});
+
+type MarkerKind = "fatal" | "accident" | "incident";
+
+type Point = {
   id: string;
+  title: string;
+  date?: string;
+  kind: MarkerKind;
   lat: number;
   lon: number;
-  title: string;
-  eventType: "ACCIDENT" | "INCIDENT" | "UNKNOWN";
-  fatalities: number;
-  date: string; // YYYY-MM-DD
-  cityState?: string;
   docketUrl?: string;
   raw?: any;
 };
 
-function toYMD(d: Date) {
+function ymd(d: Date) {
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
@@ -40,175 +52,162 @@ function last12MonthsRange() {
   return { start, end };
 }
 
-// Color rules you requested:
-// - red: accidents with fatalities
-// - orange: accidents without fatalities
-// - yellow: incidents
-function markerColor(it: UiItem) {
-  if (it.eventType === "INCIDENT") return "#F2C94C"; // yellow
-  if (it.eventType === "ACCIDENT" && it.fatalities > 0) return "#EB5757"; // red
-  if (it.eventType === "ACCIDENT") return "#F2994A"; // orange
-  return "#9B9B9B"; // unknown/other
-}
-
 export default function MapView() {
-  const r = useMemo(() => last12MonthsRange(), []);
-  const [start, setStart] = useState<string>(toYMD(r.start));
-  const [end, setEnd] = useState<string>(toYMD(r.end));
-  const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState<string>("");
-  const [items, setItems] = useState<UiItem[]>([]);
-  const [counts, setCounts] = useState({ fatalAcc: 0, acc: 0, inc: 0 });
+  const defaultRange = useMemo(() => {
+    const r = last12MonthsRange();
+    return { start: ymd(r.start), end: ymd(r.end) };
+  }, []);
+
+  const [start, setStart] = useState(defaultRange.start);
+  const [end, setEnd] = useState(defaultRange.end);
+
+  const [status, setStatus] = useState<string>("Idle");
+  const [points, setPoints] = useState<Point[]>([]);
+  const [counts, setCounts] = useState({ fatal: 0, accident: 0, incident: 0 });
+
+  // Map center / zoom
+  const usCenter: [number, number] = [39.5, -98.35];
+  const zoom = 4;
 
   async function load() {
-    setLoading(true);
     setStatus("Loading…");
-
-    const url = new URL("/api/ntsb", window.location.origin);
-    url.searchParams.set("start", start);
-    url.searchParams.set("end", end);
-
-    // Safe toggle: allow mock dots if NTSB is down
-    if (new URLSearchParams(window.location.search).get("mock") === "1") {
-      url.searchParams.set("mock", "1");
-    }
+    setPoints([]);
+    setCounts({ fatal: 0, accident: 0, incident: 0 });
 
     try {
-      const res = await fetch(url.toString());
-      const json = await res.json();
+      const res = await fetch(`/api/ntsb?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`, {
+        cache: "no-store",
+      });
+
+      const json = await res.json().catch(() => null);
 
       if (!res.ok || !json?.ok) {
-        setItems([]);
-        setCounts({ fatalAcc: 0, acc: 0, inc: 0 });
-
-        // show a short error but keep app alive
-        setStatus(
-          `NTSB fetch not OK (${res.status}). Open /api/ntsb?start=${start}&end=${end}&debug=1 to see upstreamError.`
-        );
+        setStatus(`NTSB fetch not OK. Open /api/ntsb to see upstreamError.`);
         return;
       }
 
-      const data: UiItem[] = (json.items || []) as UiItem[];
-      setItems(data);
+      const pts: Point[] = Array.isArray(json.points) ? json.points : [];
+      setPoints(pts);
 
-      let fatalAcc = 0, acc = 0, inc = 0;
-      for (const it of data) {
-        if (it.eventType === "INCIDENT") inc++;
-        else if (it.eventType === "ACCIDENT" && it.fatalities > 0) fatalAcc++;
-        else if (it.eventType === "ACCIDENT") acc++;
-      }
-      setCounts({ fatalAcc, acc, inc });
+      const c = { fatal: 0, accident: 0, incident: 0 };
+      for (const p of pts) c[p.kind] += 1;
+      setCounts(c);
 
-      setStatus(`OK · ${data.length} plotted`);
+      setStatus(`OK (${pts.length} items)`);
     } catch (e: any) {
-      setItems([]);
-      setCounts({ fatalAcc: 0, acc: 0, inc: 0 });
-      setStatus(`Client error: ${String(e?.message || e)}`);
-    } finally {
-      setLoading(false);
+      setStatus(`Error: ${String(e?.message || e)}`);
     }
   }
 
   useEffect(() => {
+    // Auto-load on first render
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Continental US initial view
-  const center: [number, number] = [39.5, -98.35];
+  const legendDot = (color: string) => (
+    <span
+      style={{
+        display: "inline-block",
+        width: 14,
+        height: 14,
+        borderRadius: 999,
+        background: color,
+        border: "2px solid rgba(0,0,0,0.25)",
+        marginRight: 8,
+        verticalAlign: "middle",
+      }}
+    />
+  );
+
+  function colorFor(kind: MarkerKind) {
+    if (kind === "fatal") return "#d93025"; // red
+    if (kind === "accident") return "#f29900"; // orange
+    return "#fbbc04"; // yellow
+  }
 
   return (
-    <div style={{ height: "100vh", width: "100vw", position: "relative" }}>
-      {/* Panel */}
+    <div style={{ position: "relative", height: "100vh", width: "100vw" }}>
+      {/* Control Panel */}
       <div
         style={{
           position: "absolute",
           top: 12,
           left: 12,
-          zIndex: 1000,
-          background: "rgba(255,255,255,0.92)",
-          borderRadius: 12,
+          zIndex: 999,
+          background: "rgba(255,255,255,0.95)",
           padding: 14,
-          width: 360,
-          boxShadow: "0 10px 30px rgba(0,0,0,0.18)",
-          backdropFilter: "blur(6px)",
+          borderRadius: 12,
+          width: 340,
+          boxShadow: "0 6px 24px rgba(0,0,0,0.18)",
+          fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
         }}
       >
-        <div style={{ fontWeight: 800, fontSize: 18 }}>Aviation Safety Watch (MVP)</div>
-        <div style={{ fontSize: 12, opacity: 0.8, marginTop: 2 }}>
-          Data source: NTSB endpoint · Default range: last 12 months
+        <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>Aviation Safety Watch (MVP)</div>
+        <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 10 }}>
+          Data source: NTSB endpoint • Default range: last 12 months
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
           <div>
-            <div style={{ fontSize: 12, fontWeight: 700 }}>Start</div>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Start</div>
             <input
               type="date"
               value={start}
               onChange={(e) => setStart(e.target.value)}
-              style={{ width: "100%" }}
+              style={{ width: "100%", padding: 8, borderRadius: 8, border: "1px solid #ddd" }}
             />
           </div>
           <div>
-            <div style={{ fontSize: 12, fontWeight: 700 }}>End</div>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>End</div>
             <input
               type="date"
               value={end}
               onChange={(e) => setEnd(e.target.value)}
-              style={{ width: "100%" }}
+              style={{ width: "100%", padding: 8, borderRadius: 8, border: "1px solid #ddd" }}
             />
           </div>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 12 }}>
           <button
             onClick={load}
-            disabled={loading}
             style={{
               padding: "8px 12px",
               borderRadius: 10,
-              border: "1px solid rgba(0,0,0,0.15)",
-              background: "white",
+              border: "1px solid #ddd",
+              background: "#f6f6f6",
               cursor: "pointer",
-              fontWeight: 700,
+              fontWeight: 600,
             }}
           >
-            {loading ? "Loading…" : "Reload"}
+            Reload
           </button>
-          <div style={{ fontSize: 13, fontWeight: 700 }}>
-            Dots shown: {items.length}
-          </div>
+          <div style={{ fontSize: 13 }}>Dots shown: <b>{points.length}</b></div>
         </div>
 
-        <div style={{ marginTop: 10, fontWeight: 800 }}>Legend</div>
-        <div style={{ marginTop: 6, fontSize: 13, display: "grid", gap: 6 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ width: 14, height: 14, borderRadius: 14, background: "#EB5757", display: "inline-block" }} />
-            Fatal accidents (red): {counts.fatalAcc}
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ width: 14, height: 14, borderRadius: 14, background: "#F2994A", display: "inline-block" }} />
-            Accidents (orange): {counts.acc}
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ width: 14, height: 14, borderRadius: 14, background: "#F2C94C", display: "inline-block" }} />
-            Incidents (yellow): {counts.inc}
-          </div>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Legend</div>
+        <div style={{ fontSize: 13, marginBottom: 6 }}>
+          {legendDot("#d93025")} Fatal accidents (red): <b>{counts.fatal}</b>
+        </div>
+        <div style={{ fontSize: 13, marginBottom: 6 }}>
+          {legendDot("#f29900")} Accidents (orange): <b>{counts.accident}</b>
+        </div>
+        <div style={{ fontSize: 13, marginBottom: 10 }}>
+          {legendDot("#fbbc04")} Incidents (yellow): <b>{counts.incident}</b>
         </div>
 
-        <div style={{ marginTop: 10, fontSize: 12, color: status.includes("OK") ? "#2F855A" : "#C53030" }}>
-          Status: {status}
+        <div style={{ fontSize: 13, color: status.includes("OK") ? "#137333" : "#b3261e" }}>
+          <b>Status:</b> {status}
         </div>
       </div>
 
       {/* Map */}
       <MapContainer
-        // If TS yells in your environment, do NOT fight it mid-flight.
-        // This is correct usage for react-leaflet.
-        center={center as any}
-        zoom={4 as any}
-        scrollWheelZoom={true as any}
-        zoomControl={false as any}
+        center={usCenter}
+        zoom={zoom}
+        scrollWheelZoom
+        zoomControl={false}   // ✅ disable default so we can place it manually
         style={{ height: "100%", width: "100%" }}
       >
         <TileLayer
@@ -216,33 +215,31 @@ export default function MapView() {
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
-        {/* zoom buttons bottom-right */}
+        {/* ✅ Zoom control bottom-right */}
         <ZoomControl position="bottomright" />
 
-        {items.map((it) => (
-          <CircleMarker
-            key={it.id}
-            center={[it.lat, it.lon] as any}
-            radius={7}
-            pathOptions={{ color: markerColor(it), fillColor: markerColor(it), fillOpacity: 0.85 }}
-          >
+        {points.map((p) => (
+          <Marker key={p.id} position={[p.lat, p.lon] as any}>
             <Popup>
-              <div style={{ fontWeight: 800, marginBottom: 6 }}>{it.title || "NTSB Case"}</div>
-              <div style={{ fontSize: 13 }}>
-                <div><b>Date:</b> {it.date}</div>
-                <div><b>Type:</b> {it.eventType}</div>
-                <div><b>Fatalities:</b> {it.fatalities}</div>
-                {it.cityState ? <div><b>Location:</b> {it.cityState}</div> : null}
-              </div>
-              {it.docketUrl ? (
-                <div style={{ marginTop: 8 }}>
-                  <a href={it.docketUrl} target="_blank" rel="noreferrer">
+              <div style={{ minWidth: 220 }}>
+                <div style={{ fontWeight: 800, marginBottom: 6 }}>{p.title}</div>
+                {p.date && <div style={{ marginBottom: 6 }}><b>Date:</b> {p.date}</div>}
+                <div style={{ marginBottom: 6 }}>
+                  <b>Category:</b>{" "}
+                  <span style={{ color: colorFor(p.kind), fontWeight: 800 }}>
+                    {p.kind === "fatal" ? "Fatal accident" : p.kind === "accident" ? "Accident" : "Incident"}
+                  </span>
+                </div>
+                {p.docketUrl ? (
+                  <a href={p.docketUrl} target="_blank" rel="noreferrer">
                     Open NTSB docket
                   </a>
-                </div>
-              ) : null}
+                ) : (
+                  <div style={{ opacity: 0.7 }}>No docket link available</div>
+                )}
+              </div>
             </Popup>
-          </CircleMarker>
+          </Marker>
         ))}
       </MapContainer>
     </div>
