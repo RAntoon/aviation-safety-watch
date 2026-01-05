@@ -1,128 +1,257 @@
 "use client";
 
-import "leaflet/dist/leaflet.css";
-import { useEffect, useMemo, useState } from "react";
-import {
-  CircleMarker,
-  MapContainer,
-  Popup,
-  TileLayer,
-  ZoomControl,
-} from "react-leaflet";
+import React, { useEffect, useMemo, useState } from "react";
 import type { LatLngExpression } from "leaflet";
+import "leaflet/dist/leaflet.css";
+import * as RL from "react-leaflet";
 
-type NtsbPoint = {
+// ✅ Hard-stop the annoying TS mismatch in some Vercel builds.
+// Runtime behavior is correct; this only sidesteps broken typings.
+const MapContainer = RL.MapContainer as unknown as React.FC<any>;
+const TileLayer = RL.TileLayer as unknown as React.FC<any>;
+const CircleMarker = RL.CircleMarker as unknown as React.FC<any>;
+const Popup = RL.Popup as unknown as React.FC<any>;
+const ZoomControl = RL.ZoomControl as unknown as React.FC<any>;
+
+type PointKind = "fatal" | "accident" | "incident";
+
+type MapPoint = {
   id: string;
   lat: number;
   lng: number;
-  title?: string;
-  eventDate?: string;
+  kind: PointKind;
+
+  // display fields (safe optional)
+  date?: string;
   city?: string;
   state?: string;
-  fatalities?: number;
-  eventType?: "ACCIDENT" | "INCIDENT" | string;
+  country?: string;
+
+  // NTSB / docket link
   docketUrl?: string;
+  ntsbCaseId?: string;
+  summary?: string;
 };
 
 function isoDate(d: Date) {
-  // YYYY-MM-DD
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
 }
 
+function last12MonthsRange() {
+  const end = new Date();
+  const start = new Date(end);
+  start.setFullYear(end.getFullYear() - 1);
+  return { start, end };
+}
+
+function colorFor(kind: PointKind) {
+  if (kind === "fatal") return "#d32f2f"; // red
+  if (kind === "accident") return "#fb8c00"; // orange
+  return "#fdd835"; // yellow
+}
+
 export default function MapView() {
-  const today = useMemo(() => new Date(), []);
-  const defaultEnd = useMemo(() => isoDate(today), [today]);
-  const defaultStart = useMemo(() => {
-    const d = new Date(today);
-    d.setFullYear(d.getFullYear() - 1);
-    return isoDate(d);
-  }, [today]);
+  const defaultRange = useMemo(() => last12MonthsRange(), []);
+  const [start, setStart] = useState<string>(isoDate(defaultRange.start));
+  const [end, setEnd] = useState<string>(isoDate(defaultRange.end));
 
-  const [start, setStart] = useState(defaultStart);
-  const [end, setEnd] = useState(defaultEnd);
+  const [points, setPoints] = useState<MapPoint[]>([]);
+  const [status, setStatus] = useState<string>("Idle");
+  const [loading, setLoading] = useState<boolean>(false);
 
-  const [status, setStatus] = useState<string>("Ready.");
-  const [points, setPoints] = useState<NtsbPoint[]>([]);
+  const center: LatLngExpression = useMemo(() => [39.5, -98.35], []); // continental US
 
-  const center: LatLngExpression = [39.5, -98.35]; // continental US
+  const counts = useMemo(() => {
+    let fatal = 0,
+      accident = 0,
+      incident = 0;
+    for (const p of points) {
+      if (p.kind === "fatal") fatal++;
+      else if (p.kind === "accident") accident++;
+      else incident++;
+    }
+    return { fatal, accident, incident, total: points.length };
+  }, [points]);
 
   async function load() {
+    setLoading(true);
     setStatus("Loading…");
     try {
-      const res = await fetch(`/api/ntsb?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`, {
-        cache: "no-store",
-      });
+      const url = `/api/ntsb?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
+      const res = await fetch(url, { cache: "no-store" });
 
-      const json = await res.json();
+      const text = await res.text();
+      let json: any = null;
+      try {
+        json = JSON.parse(text);
+      } catch {
+        // leave null
+      }
 
       if (!res.ok) {
+        // Show useful message directly in the UI
+        const upstream = json?.error || json?.message || text?.slice(0, 300);
         setPoints([]);
-        setStatus(`NTSB fetch not OK (${res.status}). Open /api/ntsb to see details.`);
+        setStatus(`NTSB fetch not OK (${res.status}). Open /api/ntsb to see upstreamError.`);
+        console.error("API /api/ntsb error:", { status: res.status, upstream });
         return;
       }
 
-      const data: NtsbPoint[] = Array.isArray(json?.points) ? json.points : [];
-      setPoints(data);
+      // Expecting: { ok:true, points:[...] }
+      const nextPoints: MapPoint[] = Array.isArray(json?.points) ? json.points : [];
+      setPoints(nextPoints);
 
-      if (json?.upstreamError) {
-        setStatus(`Upstream warning: ${json.upstreamError}`);
-      } else {
-        setStatus(`Loaded ${data.length} items.`);
-      }
+      setStatus(`OK. Loaded ${nextPoints.length} points.`);
     } catch (e: any) {
       setPoints([]);
-      setStatus(`Fetch error: ${e?.message ?? String(e)}`);
+      setStatus(`Fetch failed (network/runtime). See console.`);
+      console.error(e);
+    } finally {
+      setLoading(false);
     }
   }
 
+  // Auto-load once on mount
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const counts = useMemo(() => {
-    let fatalAcc = 0;
-    let nonfatalAcc = 0;
-    let incidents = 0;
-
-    for (const p of points) {
-      const isIncident = (p.eventType ?? "").toUpperCase() === "INCIDENT";
-      const fat = Number(p.fatalities ?? 0);
-
-      if (isIncident) incidents += 1;
-      else if (fat > 0) fatalAcc += 1;
-      else nonfatalAcc += 1;
-    }
-
-    return { fatalAcc, nonfatalAcc, incidents };
-  }, [points]);
-
-  function markerStyle(p: NtsbPoint) {
-    const isIncident = (p.eventType ?? "").toUpperCase() === "INCIDENT";
-    const fat = Number(p.fatalities ?? 0);
-
-    // requested colors:
-    // red = accidents w fatalities
-    // orange = accidents w/o fatalities
-    // yellow = incidents
-    if (isIncident) return { color: "#f2c200", fillColor: "#f2c200" }; // yellow
-    if (fat > 0) return { color: "#d93025", fillColor: "#d93025" }; // red
-    return { color: "#f57c00", fillColor: "#f57c00" }; // orange
-  }
-
   return (
-    <div style={{ height: "100vh", width: "100vw" }}>
+    <div style={{ height: "100vh", width: "100vw", position: "relative" }}>
+      {/* Control panel */}
+      <div
+        style={{
+          position: "absolute",
+          zIndex: 1000,
+          top: 12,
+          left: 12,
+          width: 320,
+          padding: 14,
+          borderRadius: 12,
+          background: "rgba(255,255,255,0.95)",
+          boxShadow: "0 10px 30px rgba(0,0,0,0.15)",
+          fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
+        }}
+      >
+        <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 6 }}>
+          Aviation Safety Watch (MVP)
+        </div>
+        <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 10 }}>
+          Data source: NTSB endpoint · Default range: last 12 months
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Start</div>
+            <input
+              type="date"
+              value={start}
+              onChange={(e) => setStart(e.target.value)}
+              style={{ width: "100%", padding: 8, borderRadius: 8, border: "1px solid #ddd" }}
+            />
+          </div>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>End</div>
+            <input
+              type="date"
+              value={end}
+              onChange={(e) => setEnd(e.target.value)}
+              style={{ width: "100%", padding: 8, borderRadius: 8, border: "1px solid #ddd" }}
+            />
+          </div>
+        </div>
+
+        <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10 }}>
+          <button
+            onClick={load}
+            disabled={loading}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 10,
+              border: "1px solid #ddd",
+              background: loading ? "#f4f4f4" : "#fff",
+              cursor: loading ? "not-allowed" : "pointer",
+              fontWeight: 700,
+            }}
+          >
+            {loading ? "Loading…" : "Reload"}
+          </button>
+
+          <div style={{ fontSize: 12, opacity: 0.85 }}>
+            Dots shown: <b>{counts.total}</b>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontWeight: 800, marginBottom: 6 }}>Legend</div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+            <span
+              style={{
+                width: 14,
+                height: 14,
+                borderRadius: 7,
+                background: colorFor("fatal"),
+                display: "inline-block",
+              }}
+            />
+            <div style={{ fontSize: 13 }}>
+              Fatal accidents (red): <b>{counts.fatal}</b>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+            <span
+              style={{
+                width: 14,
+                height: 14,
+                borderRadius: 7,
+                background: colorFor("accident"),
+                display: "inline-block",
+              }}
+            />
+            <div style={{ fontSize: 13 }}>
+              Accidents (orange): <b>{counts.accident}</b>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span
+              style={{
+                width: 14,
+                height: 14,
+                borderRadius: 7,
+                background: colorFor("incident"),
+                display: "inline-block",
+              }}
+            />
+            <div style={{ fontSize: 13 }}>
+              Incidents (yellow): <b>{counts.incident}</b>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 10, fontSize: 12, lineHeight: 1.3 }}>
+          <b>Status:</b>{" "}
+          <span style={{ color: status.includes("not OK") || status.includes("failed") ? "#d32f2f" : "#222" }}>
+            {status}
+          </span>
+        </div>
+      </div>
+
+      {/* Map */}
       <MapContainer
         center={center}
         zoom={4}
         scrollWheelZoom
         style={{ height: "100%", width: "100%" }}
-        zoomControl={false} // ✅ disable default (top-left)
+        zoomControl={false}
       >
-        {/* ✅ place zoom in bottom-right */}
+        {/* ✅ Zoom buttons back in bottom-right */}
         <ZoomControl position="bottomright" />
 
         <TileLayer
@@ -135,122 +264,58 @@ export default function MapView() {
             key={p.id}
             center={[p.lat, p.lng]}
             radius={7}
-            pathOptions={{ ...markerStyle(p), fillOpacity: 0.85, weight: 2 }}
+            pathOptions={{
+              color: "#333",
+              weight: 1,
+              fillColor: colorFor(p.kind),
+              fillOpacity: 0.9,
+            }}
           >
             <Popup>
-              <div style={{ minWidth: 220 }}>
-                <div style={{ fontWeight: 700, marginBottom: 6 }}>
-                  {p.title ?? "NTSB Case"}
+              <div style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" }}>
+                <div style={{ fontWeight: 800, marginBottom: 6 }}>
+                  {p.kind === "fatal"
+                    ? "Fatal Accident"
+                    : p.kind === "accident"
+                    ? "Accident"
+                    : "Incident"}
                 </div>
-                <div style={{ fontSize: 13, lineHeight: 1.35 }}>
-                  <div>
-                    <b>Date:</b> {p.eventDate ?? "—"}
-                  </div>
-                  <div>
-                    <b>Location:</b> {[p.city, p.state].filter(Boolean).join(", ") || "—"}
-                  </div>
-                  <div>
-                    <b>Type:</b> {p.eventType ?? "—"}
-                  </div>
-                  <div>
-                    <b>Fatalities:</b> {String(p.fatalities ?? 0)}
-                  </div>
-                  {p.docketUrl ? (
-                    <div style={{ marginTop: 8 }}>
-                      <a href={p.docketUrl} target="_blank" rel="noreferrer">
-                        Open NTSB docket
-                      </a>
+
+                <div style={{ fontSize: 13, marginBottom: 6 }}>
+                  {p.date ? <div><b>Date:</b> {p.date}</div> : null}
+                  {(p.city || p.state || p.country) ? (
+                    <div>
+                      <b>Location:</b>{" "}
+                      {[p.city, p.state, p.country].filter(Boolean).join(", ")}
+                    </div>
+                  ) : null}
+                  {p.ntsbCaseId ? (
+                    <div>
+                      <b>NTSB Case:</b> {p.ntsbCaseId}
                     </div>
                   ) : null}
                 </div>
+
+                {p.summary ? (
+                  <div style={{ fontSize: 12, opacity: 0.9, marginBottom: 8 }}>
+                    {p.summary}
+                  </div>
+                ) : null}
+
+                {p.docketUrl ? (
+                  <a href={p.docketUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>
+                    Open NTSB docket →
+                  </a>
+                ) : (
+                  <div style={{ fontSize: 12, opacity: 0.75 }}>
+                    (No docket link provided by API yet)
+                  </div>
+                )}
               </div>
             </Popup>
           </CircleMarker>
         ))}
       </MapContainer>
-
-      {/* overlay panel */}
-      <div
-        style={{
-          position: "absolute",
-          top: 14,
-          left: 14,
-          zIndex: 999,
-          width: 360,
-          background: "rgba(255,255,255,0.95)",
-          borderRadius: 12,
-          padding: 14,
-          boxShadow: "0 10px 30px rgba(0,0,0,0.15)",
-          fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
-        }}
-      >
-        <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 6 }}>
-          Aviation Safety Watch (MVP)
-        </div>
-        <div style={{ fontSize: 12, color: "#444", marginBottom: 10 }}>
-          Data source: NTSB endpoint · Default range: last 12 months
-        </div>
-
-        <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Start</div>
-            <input
-              type="date"
-              value={start}
-              onChange={(e) => setStart(e.target.value)}
-              style={{ width: "100%", padding: 8, borderRadius: 8, border: "1px solid #ddd" }}
-            />
-          </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>End</div>
-            <input
-              type="date"
-              value={end}
-              onChange={(e) => setEnd(e.target.value)}
-              style={{ width: "100%", padding: 8, borderRadius: 8, border: "1px solid #ddd" }}
-            />
-          </div>
-        </div>
-
-        <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10 }}>
-          <button
-            onClick={load}
-            style={{
-              padding: "8px 12px",
-              borderRadius: 10,
-              border: "1px solid #ddd",
-              background: "#fff",
-              cursor: "pointer",
-              fontWeight: 700,
-            }}
-          >
-            Reload
-          </button>
-          <div style={{ fontSize: 13 }}>
-            Dots shown: <b>{points.length}</b>
-          </div>
-        </div>
-
-        <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 6 }}>Legend</div>
-        <div style={{ fontSize: 13, lineHeight: 1.5 }}>
-          <div>
-            <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 10, background: "#d93025", marginRight: 8 }} />
-            Fatal accidents (red): <b>{counts.fatalAcc}</b>
-          </div>
-          <div>
-            <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 10, background: "#f57c00", marginRight: 8 }} />
-            Accidents (orange): <b>{counts.nonfatalAcc}</b>
-          </div>
-          <div>
-            <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 10, background: "#f2c200", marginRight: 8 }} />
-            Incidents (yellow): <b>{counts.incidents}</b>
-          </div>
-        </div>
-
-        <div style={{ marginTop: 10, fontSize: 12, color: status.includes("not OK") ? "#b00020" : "#333" }}>
-          <b>Status:</b> {status}
-        </div>
-      </div>
     </div>
   );
 }
