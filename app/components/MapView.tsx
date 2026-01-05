@@ -1,183 +1,262 @@
-// @ts-nocheck
 "use client";
 
-/* eslint-disable @next/next/no-img-element */
+import React, { useMemo, useState } from "react";
+import dynamic from "next/dynamic";
+import "leaflet/dist/leaflet.css";
 
-import { useEffect, useMemo, useState } from "react";
-import {
-  MapContainer,
-  TileLayer,
-  CircleMarker,
-  Popup,
-  ZoomControl,
-} from "react-leaflet";
+// Dynamically import react-leaflet pieces (prevents “window is not defined”)
+const MapContainer = dynamic(
+  () => import("react-leaflet").then((m) => m.MapContainer),
+  { ssr: false }
+);
+const TileLayer = dynamic(
+  () => import("react-leaflet").then((m) => m.TileLayer),
+  { ssr: false }
+);
+const CircleMarker = dynamic(
+  () => import("react-leaflet").then((m) => m.CircleMarker),
+  { ssr: false }
+);
+const Popup = dynamic(() => import("react-leaflet").then((m) => m.Popup), {
+  ssr: false,
+});
+const ZoomControl = dynamic(
+  () => import("react-leaflet").then((m) => m.ZoomControl),
+  { ssr: false }
+);
 
-type NtsbPoint = {
+type MarkerKind = "fatal" | "accident" | "incident";
+
+type MarkerPoint = {
   id: string;
+  kind: MarkerKind;
   lat: number;
   lon: number;
-  label: string;
-  eventDate?: string;
-  city?: string;
-  state?: string;
-  country?: string;
-  fatalities?: number;
-  eventType?: "ACCIDENT" | "INCIDENT" | string;
-  docketUrl?: string | null;
-  ntsbNumber?: string | null;
+  title: string;
+  date?: string;
+  locationText?: string;
+  docketUrl?: string;
 };
 
-function toYMD(d: Date) {
+function ymd(d: Date) {
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
 }
 
-function last12MonthsRange() {
+function defaultLast12Months() {
   const end = new Date();
   const start = new Date(end);
   start.setFullYear(end.getFullYear() - 1);
-  return { start, end };
+  return { start: ymd(start), end: ymd(end) };
 }
 
-function colorFor(p: NtsbPoint) {
-  const isIncident =
-    String(p.eventType || "").toUpperCase() === "INCIDENT" ||
-    String(p.eventType || "").toUpperCase().includes("INCIDENT");
+// Color mapping (you asked for red/orange/yellow)
+function colorFor(kind: MarkerKind) {
+  if (kind === "fatal") return "#d32f2f"; // red
+  if (kind === "accident") return "#f57c00"; // orange
+  return "#fbc02d"; // yellow
+}
 
-  if (isIncident) return "#f5c542"; // yellow
-  const fat = Number(p.fatalities || 0);
-  if (fat > 0) return "#d83a3a"; // red
-  return "#f08a24"; // orange
+// Very conservative “best effort” extractor until we confirm the exact NTSB schema
+function extractMarkersFromRaw(raw: any): MarkerPoint[] {
+  // Your route returns { raw: ... } where raw could be array or object
+  const payload = raw;
+
+  // Try common shapes:
+  const cases: any[] =
+    Array.isArray(payload) ? payload :
+    Array.isArray(payload?.cases) ? payload.cases :
+    Array.isArray(payload?.Cases) ? payload.Cases :
+    Array.isArray(payload?.data) ? payload.data :
+    [];
+
+  const out: MarkerPoint[] = [];
+
+  for (const c of cases) {
+    // These field names may differ; we’ll adapt once we see the actual raw payload.
+    const id =
+      String(c?.caseNumber ?? c?.CaseNumber ?? c?.NtsbNumber ?? c?.ntsbNumber ?? c?.id ?? crypto.randomUUID());
+
+    const title =
+      String(
+        c?.eventType ??
+          c?.EventType ??
+          c?.injurySeverity ??
+          c?.InjurySeverity ??
+          c?.aircraftMake ??
+          c?.AircraftMake ??
+          "NTSB case"
+      );
+
+    const date =
+      String(c?.eventDate ?? c?.EventDate ?? c?.date ?? c?.Date ?? "").trim() || undefined;
+
+    const locationText =
+      String(
+        c?.location ??
+          c?.Location ??
+          c?.city ??
+          c?.City ??
+          ""
+      ).trim() || undefined;
+
+    // Location: we need actual coordinates to place dots.
+    // Try a bunch of common coordinate keys:
+    const lat =
+      c?.latitude ??
+      c?.Latitude ??
+      c?.lat ??
+      c?.Lat ??
+      c?.locationLat ??
+      c?.LocationLat;
+
+    const lon =
+      c?.longitude ??
+      c?.Longitude ??
+      c?.lon ??
+      c?.Lon ??
+      c?.lng ??
+      c?.Lng ??
+      c?.locationLon ??
+      c?.LocationLon;
+
+    if (typeof lat !== "number" || typeof lon !== "number") {
+      // No coordinates => cannot plot yet (we’ll fix via geocoding in the next step)
+      continue;
+    }
+
+    // Determine kind (fatal/accident/incident)
+    const fatalities =
+      Number(c?.fatalities ?? c?.Fatalities ?? c?.totalFatalities ?? 0) || 0;
+
+    const mode =
+      String(c?.mode ?? c?.Mode ?? c?.investigationType ?? c?.InvestigationType ?? "").toLowerCase();
+
+    // Best-effort classification:
+    let kind: MarkerKind = "incident";
+    if (fatalities > 0) kind = "fatal";
+    else if (mode.includes("accident") || String(c?.eventClass ?? c?.EventClass ?? "").toLowerCase().includes("accident")) kind = "accident";
+    else kind = "incident";
+
+    const docketUrl =
+      (c?.docketUrl ?? c?.DocketUrl ?? c?.ntsbUrl ?? c?.NtsbUrl ?? "").trim() || undefined;
+
+    out.push({
+      id,
+      kind,
+      lat,
+      lon,
+      title,
+      date,
+      locationText,
+      docketUrl,
+    });
+  }
+
+  return out;
 }
 
 export default function MapView() {
-  const { start, end } = useMemo(() => last12MonthsRange(), []);
-  const [startYmd, setStartYmd] = useState<string>(toYMD(start));
-  const [endYmd, setEndYmd] = useState<string>(toYMD(end));
+  const def = useMemo(() => defaultLast12Months(), []);
+  const [start, setStart] = useState(def.start);
+  const [end, setEnd] = useState(def.end);
 
-  const [status, setStatus] = useState<string>("Idle");
-  const [points, setPoints] = useState<NtsbPoint[]>([]);
-  const [counts, setCounts] = useState({
-    fatalAccidents: 0,
-    nonFatalAccidents: 0,
-    incidents: 0,
-  });
+  const [status, setStatus] = useState<string>("");
+  const [markers, setMarkers] = useState<MarkerPoint[]>([]);
 
-  async function load() {
+  const counts = useMemo(() => {
+    const fatal = markers.filter((m) => m.kind === "fatal").length;
+    const accident = markers.filter((m) => m.kind === "accident").length;
+    const incident = markers.filter((m) => m.kind === "incident").length;
+    return { fatal, accident, incident };
+  }, [markers]);
+
+  async function reload() {
     setStatus("Loading…");
-    setPoints([]);
-    setCounts({ fatalAccidents: 0, nonFatalAccidents: 0, incidents: 0 });
+    setMarkers([]);
 
     try {
-      const url = `/api/ntsb?start=${encodeURIComponent(
-        startYmd
-      )}&end=${encodeURIComponent(endYmd)}`;
-
-      const res = await fetch(url, { cache: "no-store" });
+      const res = await fetch(`/api/ntsb?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`, {
+        cache: "no-store",
+      });
       const json = await res.json();
 
-      if (!res.ok || !json?.ok) {
+      if (!json?.ok) {
         setStatus(
-          `NTSB fetch failed (${res.status}). Check /api/ntsb response in Vercel logs.`
+          `NTSB fetch not OK. Open /api/ntsb in your browser to see upstreamError.`
         );
         return;
       }
 
-      const pts: NtsbPoint[] = json.points || [];
-      setPoints(pts);
+      const pts = extractMarkersFromRaw(json.raw);
+      setMarkers(pts);
 
-      let fatalAccidents = 0;
-      let nonFatalAccidents = 0;
-      let incidents = 0;
-
-      for (const p of pts) {
-        const isIncident =
-          String(p.eventType || "").toUpperCase() === "INCIDENT" ||
-          String(p.eventType || "").toUpperCase().includes("INCIDENT");
-        if (isIncident) incidents += 1;
-        else if (Number(p.fatalities || 0) > 0) fatalAccidents += 1;
-        else nonFatalAccidents += 1;
+      if (pts.length === 0) {
+        setStatus(
+          `No plottable points yet (likely missing lat/lon in payload). Next step: geocode server-side.`
+        );
+      } else {
+        setStatus(`Loaded ${pts.length} points.`);
       }
-
-      setCounts({ fatalAccidents, nonFatalAccidents, incidents });
-
-      const note = json?.geocodeNote ? ` (${json.geocodeNote})` : "";
-      setStatus(`OK: ${pts.length} points${note}`);
     } catch (e: any) {
-      setStatus(`Client error: ${String(e?.message || e)}`);
+      setStatus(`Client fetch failed: ${String(e?.message ?? e)}`);
     }
   }
 
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   return (
-    <div style={{ position: "relative", height: "100%", width: "100%" }}>
-      {/* Search / Controls panel */}
+    <div style={{ position: "relative", height: "100vh", width: "100%" }}>
+      {/* Control panel */}
       <div
         style={{
           position: "absolute",
-          top: 12,
-          left: 12,
           zIndex: 1000,
+          top: 16,
+          left: 64, // leaves room so it doesn't collide with zoom buttons
           width: 360,
           background: "rgba(255,255,255,0.95)",
-          borderRadius: 10,
-          padding: 12,
-          boxShadow: "0 8px 30px rgba(0,0,0,0.15)",
-          fontFamily:
-            'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji"',
+          borderRadius: 12,
+          boxShadow: "0 8px 24px rgba(0,0,0,0.15)",
+          padding: 14,
+          fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial",
         }}
       >
-        <div style={{ fontSize: 18, fontWeight: 700 }}>
+        <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>
           Aviation Safety Watch (MVP)
         </div>
-        <div style={{ fontSize: 12, opacity: 0.75, marginTop: 2 }}>
-          Data source: NTSB Public API · Default range: last 12 months
+        <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 10 }}>
+          Data source: NTSB endpoint • Default range: last 12 months
         </div>
 
-        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 12, fontWeight: 600 }}>Start</div>
             <input
               type="date"
-              value={startYmd}
-              onChange={(e) => setStartYmd(e.target.value)}
-              style={{
-                width: "100%",
-                padding: "6px 8px",
-                borderRadius: 8,
-                border: "1px solid #ddd",
-              }}
+              value={start}
+              onChange={(e) => setStart(e.target.value)}
+              style={{ width: "100%" }}
             />
           </div>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 12, fontWeight: 600 }}>End</div>
             <input
               type="date"
-              value={endYmd}
-              onChange={(e) => setEndYmd(e.target.value)}
-              style={{
-                width: "100%",
-                padding: "6px 8px",
-                borderRadius: 8,
-                border: "1px solid #ddd",
-              }}
+              value={end}
+              onChange={(e) => setEnd(e.target.value)}
+              style={{ width: "100%" }}
             />
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 10 }}>
           <button
-            onClick={load}
+            onClick={reload}
             style={{
               padding: "8px 12px",
-              borderRadius: 8,
-              border: "1px solid #ddd",
+              borderRadius: 10,
+              border: "1px solid rgba(0,0,0,0.15)",
               background: "#fff",
               cursor: "pointer",
               fontWeight: 600,
@@ -185,122 +264,73 @@ export default function MapView() {
           >
             Reload
           </button>
-          <div style={{ alignSelf: "center", fontSize: 13 }}>
-            Dots shown: <b>{points.length}</b>
+          <div style={{ fontSize: 12 }}>Dots shown: {markers.length}</div>
+        </div>
+
+        <div style={{ marginTop: 12, fontSize: 12, fontWeight: 700 }}>
+          Legend
+        </div>
+        <div style={{ marginTop: 6, fontSize: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ width: 12, height: 12, borderRadius: 999, background: colorFor("fatal"), display: "inline-block" }} />
+            Fatal accidents (red): {counts.fatal}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+            <span style={{ width: 12, height: 12, borderRadius: 999, background: colorFor("accident"), display: "inline-block" }} />
+            Accidents (orange): {counts.accident}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+            <span style={{ width: 12, height: 12, borderRadius: 999, background: colorFor("incident"), display: "inline-block" }} />
+            Incidents (yellow): {counts.incident}
           </div>
         </div>
 
-        <div style={{ marginTop: 10, fontSize: 13 }}>
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>Legend</div>
-
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span
-              style={{
-                width: 14,
-                height: 14,
-                borderRadius: "50%",
-                background: "#d83a3a",
-                display: "inline-block",
-              }}
-            />
-            <span>
-              Fatal accidents (red): <b>{counts.fatalAccidents}</b>
-            </span>
-          </div>
-
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span
-              style={{
-                width: 14,
-                height: 14,
-                borderRadius: "50%",
-                background: "#f08a24",
-                display: "inline-block",
-              }}
-            />
-            <span>
-              Accidents (orange): <b>{counts.nonFatalAccidents}</b>
-            </span>
-          </div>
-
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span
-              style={{
-                width: 14,
-                height: 14,
-                borderRadius: "50%",
-                background: "#f5c542",
-                display: "inline-block",
-              }}
-            />
-            <span>
-              Incidents (yellow): <b>{counts.incidents}</b>
-            </span>
-          </div>
-        </div>
-
-        <div style={{ marginTop: 10, fontSize: 12 }}>
-          <b>Status:</b> {status}
+        <div style={{ marginTop: 10, fontSize: 12, color: status.includes("Loaded") ? "green" : "crimson" }}>
+          Status: {status || "—"}
         </div>
       </div>
 
       {/* Map */}
       <MapContainer
-        center={[39.5, -98.35]}
+        center={[39.5, -98.35]} // continental US
         zoom={4}
         style={{ height: "100%", width: "100%" }}
-        scrollWheelZoom
-        zoomControl={false}
+        zoomControl={false} // we'll place it manually
       >
-        {/* Separate zoom controls from the top-left panel */}
-        <ZoomControl position="bottomright" />
-
+        <ZoomControl position="topleft" />
         <TileLayer
           attribution="&copy; OpenStreetMap contributors"
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
-        {points.map((p) => (
+        {markers.map((m) => (
           <CircleMarker
-            key={p.id}
-            center={[p.lat, p.lon]}
+            key={m.id}
+            center={[m.lat, m.lon]}
             radius={6}
             pathOptions={{
-              color: colorFor(p),
-              fillColor: colorFor(p),
+              color: colorFor(m.kind),
+              fillColor: colorFor(m.kind),
               fillOpacity: 0.85,
-              weight: 1,
+              weight: 2,
             }}
           >
             <Popup>
-              <div style={{ minWidth: 220 }}>
-                <div style={{ fontWeight: 800 }}>{p.label}</div>
-                <div style={{ fontSize: 12, marginTop: 4 }}>
-                  {p.eventDate ? <div>Date: {p.eventDate}</div> : null}
-                  {p.city || p.state || p.country ? (
-                    <div>
-                      Location: {[p.city, p.state, p.country]
-                        .filter(Boolean)
-                        .join(", ")}
-                    </div>
-                  ) : null}
-                  <div>Type: {p.eventType || "—"}</div>
-                  <div>Fatalities: {Number(p.fatalities || 0)}</div>
-                </div>
-
-                {p.docketUrl ? (
+              <div style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial" }}>
+                <div style={{ fontWeight: 800, marginBottom: 6 }}>{m.title}</div>
+                {m.date ? <div><b>Date:</b> {m.date}</div> : null}
+                {m.locationText ? <div><b>Location:</b> {m.locationText}</div> : null}
+                {m.docketUrl ? (
                   <div style={{ marginTop: 8 }}>
-                    <a href={p.docketUrl} target="_blank" rel="noreferrer">
+                    <a href={m.docketUrl} target="_blank" rel="noreferrer">
                       Open NTSB docket
                     </a>
                   </div>
-                ) : null}
-
-                {p.ntsbNumber ? (
-                  <div style={{ marginTop: 6, fontSize: 12, opacity: 0.8 }}>
-                    NTSB #: {p.ntsbNumber}
+                ) : (
+                  <div style={{ marginTop: 8, opacity: 0.7 }}>
+                    (No docket URL found in payload yet)
                   </div>
-                ) : null}
+                )}
               </div>
             </Popup>
           </CircleMarker>
