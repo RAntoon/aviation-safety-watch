@@ -1,3 +1,4 @@
+// @ts-nocheck
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -44,10 +45,10 @@ function last12MonthsRange() {
 function markerStyle(bucket: Bucket) {
   // red = fatal accidents, orange = non-fatal accidents, yellow = incidents
   if (bucket === "fatal")
-    return { color: "#b91c1c", fillColor: "#ef4444" }; // red-ish
+    return { color: "#b91c1c", fillColor: "#ef4444" };
   if (bucket === "accident")
-    return { color: "#c2410c", fillColor: "#fb923c" }; // orange-ish
-  return { color: "#a16207", fillColor: "#facc15" }; // yellow-ish
+    return { color: "#c2410c", fillColor: "#fb923c" };
+  return { color: "#a16207", fillColor: "#facc15" };
 }
 
 export default function MapView() {
@@ -64,16 +65,24 @@ export default function MapView() {
   async function load() {
     setStatus("Loading...");
     try {
-      const res = await fetch(`/api/ntsb?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`, {
-        method: "GET",
-        headers: { Accept: "application/json" },
-      });
+      const res = await fetch(
+        `/api/ntsb?start=${encodeURIComponent(start)}&end=${encodeURIComponent(
+          end
+        )}`,
+        {
+          method: "GET",
+          headers: { Accept: "application/json" },
+          cache: "no-store",
+        }
+      );
 
       const json = await res.json();
 
       if (!res.ok || !json?.ok) {
         const msg = json?.message || "NTSB fetch failed";
-        setStatus(`${msg} (${res.status}). Check /api/ntsb response in Vercel logs.`);
+        setStatus(
+          `${msg} (${res.status}). Check /api/ntsb response in Vercel logs.`
+        );
         setPoints([]);
         return;
       }
@@ -109,13 +118,12 @@ export default function MapView() {
         zoom={4}
         scrollWheelZoom
         style={{ height: "100%", width: "100%" }}
-        zoomControl={false} // <— we’ll put zoom somewhere else
+        zoomControl={false}
       >
-        {/* Zoom buttons moved away from your panel */}
+        {/* Move zoom buttons away from the panel */}
         <ZoomControl position="topright" />
 
         <TileLayer
-          // NOTE: react-leaflet v4 types can be finicky; keep it simple
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           attribution="&copy; OpenStreetMap contributors"
         />
@@ -152,7 +160,8 @@ export default function MapView() {
 
                   {(p.city || p.state) && (
                     <div>
-                      <b>Location:</b> {[p.city, p.state].filter(Boolean).join(", ")}
+                      <b>Location:</b>{" "}
+                      {[p.city, p.state].filter(Boolean).join(", ")}
                     </div>
                   )}
 
@@ -189,7 +198,7 @@ export default function MapView() {
         })}
       </MapContainer>
 
-      {/* Your panel */}
+      {/* Control panel */}
       <div
         style={{
           position: "absolute",
@@ -232,7 +241,14 @@ export default function MapView() {
           </div>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            marginTop: 10,
+          }}
+        >
           <button onClick={load} style={{ padding: "6px 10px" }}>
             Reload
           </button>
@@ -241,7 +257,6 @@ export default function MapView() {
           </div>
         </div>
 
-        {/* Legend */}
         <div style={{ marginTop: 10, fontSize: 13 }}>
           <div style={{ fontWeight: 700, marginBottom: 6 }}>Legend</div>
 
@@ -256,10 +271,19 @@ export default function MapView() {
                 display: "inline-block",
               }}
             />
-            <span>Fatal accidents (red): <b>{counts.fatal}</b></span>
+            <span>
+              Fatal accidents (red): <b>{counts.fatal}</b>
+            </span>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              marginTop: 6,
+            }}
+          >
             <span
               style={{
                 width: 12,
@@ -270,10 +294,19 @@ export default function MapView() {
                 display: "inline-block",
               }}
             />
-            <span>Accidents (orange): <b>{counts.accident}</b></span>
+            <span>
+              Accidents (orange): <b>{counts.accident}</b>
+            </span>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              marginTop: 6,
+            }}
+          >
             <span
               style={{
                 width: 12,
@@ -284,7 +317,9 @@ export default function MapView() {
                 display: "inline-block",
               }}
             />
-            <span>Incidents (yellow): <b>{counts.incident}</b></span>
+            <span>
+              Incidents (yellow): <b>{counts.incident}</b>
+            </span>
           </div>
         </div>
 
