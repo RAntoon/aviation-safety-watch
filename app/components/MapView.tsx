@@ -1,31 +1,33 @@
-// @ts-nocheck
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
-import dynamic from "next/dynamic";
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  MapContainer,
+  TileLayer,
+  CircleMarker,
+  Popup,
+  ZoomControl,
+} from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 
-const MapContainer = dynamic(
-  () => import("react-leaflet").then((m) => m.MapContainer),
-  { ssr: false }
-);
-const TileLayer = dynamic(
-  () => import("react-leaflet").then((m) => m.TileLayer),
-  { ssr: false }
-);
-const CircleMarker = dynamic(
-  () => import("react-leaflet").then((m) => m.CircleMarker),
-  { ssr: false }
-);
-const Popup = dynamic(() => import("react-leaflet").then((m) => m.Popup), {
-  ssr: false,
-});
-const ZoomControl = dynamic(
-  () => import("react-leaflet").then((m) => m.ZoomControl),
-  { ssr: false }
-);
+type Bucket = "fatal" | "accident" | "incident";
 
-function toInputDate(d: Date) {
+type NtsbPoint = {
+  id: string;
+  lat: number;
+  lon: number;
+  ntsbNumber?: string;
+  mkey?: string;
+  eventDate?: string;
+  city?: string;
+  state?: string;
+  aircraft?: string;
+  bucket: Bucket;
+  fatal?: number;
+  detailsUrl?: string | null;
+};
+
+function toYMD(d: Date) {
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
@@ -36,140 +38,259 @@ function last12MonthsRange() {
   const end = new Date();
   const start = new Date(end);
   start.setFullYear(end.getFullYear() - 1);
-  return { start: toInputDate(start), end: toInputDate(end) };
+  return { start, end };
+}
+
+function markerStyle(bucket: Bucket) {
+  // red = fatal accidents, orange = non-fatal accidents, yellow = incidents
+  if (bucket === "fatal")
+    return { color: "#b91c1c", fillColor: "#ef4444" }; // red-ish
+  if (bucket === "accident")
+    return { color: "#c2410c", fillColor: "#fb923c" }; // orange-ish
+  return { color: "#a16207", fillColor: "#facc15" }; // yellow-ish
 }
 
 export default function MapView() {
-  const center = useMemo(() => [39.5, -98.35], []);
+  const defaultRange = useMemo(() => last12MonthsRange(), []);
+  const [start, setStart] = useState<string>(toYMD(defaultRange.start));
+  const [end, setEnd] = useState<string>(toYMD(defaultRange.end));
 
-  const defaults = last12MonthsRange();
-  const [start, setStart] = useState(defaults.start);
-  const [end, setEnd] = useState(defaults.end);
-
-  const [dots, setDots] = useState([]);
-  const [status, setStatus] = useState("Idle");
+  const [status, setStatus] = useState<string>("Idle");
+  const [points, setPoints] = useState<NtsbPoint[]>([]);
+  const [sourceLine, setSourceLine] = useState<string>(
+    "Data source: NTSB Public API · Default range: last 12 months"
+  );
 
   async function load() {
-    setStatus("Loading…");
-    setDots([]);
+    setStatus("Loading...");
     try {
-      const res = await fetch(
-        `/api/ntsb?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
-        { cache: "no-store" }
-      );
+      const res = await fetch(`/api/ntsb?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+      });
+
       const json = await res.json();
-      if (!res.ok || !json.ok) {
-        setStatus(`NTSB fetch failed (${res.status})`);
+
+      if (!res.ok || !json?.ok) {
+        const msg = json?.message || "NTSB fetch failed";
+        setStatus(`${msg} (${res.status}). Check /api/ntsb response in Vercel logs.`);
+        setPoints([]);
         return;
       }
-      const rows = Array.isArray(json.data) ? json.data : [];
-      const mapped = rows
-        .map((r) => {
-          const lat = Number(r?.Latitude ?? r?.latitude ?? r?.Lat ?? r?.lat);
-          const lon = Number(
-            r?.Longitude ?? r?.longitude ?? r?.Lon ?? r?.lon
-          );
-          if (!lat || !lon) return null;
-          return {
-            id: `${lat}-${lon}-${r?.NtsbNumber || ""}`,
-            lat,
-            lon,
-            title:
-              r?.AirportName ||
-              r?.airportName ||
-              r?.Location ||
-              r?.location ||
-              r?.City ||
-              r?.city ||
-              r?.NtsbNumber ||
-              "",
-          };
-        })
-        .filter(Boolean);
-      setDots(mapped);
+
+      setSourceLine(
+        `Data source: ${json.source || "NTSB Public API"} · Default range: last 12 months`
+      );
+      setPoints(Array.isArray(json.data) ? json.data : []);
       setStatus("OK");
-    } catch (e) {
-      setStatus(`Fetch error: ${String(e)}`);
+    } catch (e: any) {
+      setStatus(`Error: ${String(e)}`);
+      setPoints([]);
     }
   }
 
   useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const counts = useMemo(() => {
+    const c = { fatal: 0, accident: 0, incident: 0 };
+    for (const p of points) c[p.bucket]++;
+    return c;
+  }, [points]);
+
+  const usCenter: [number, number] = [39.5, -98.35];
+
   return (
-    <div style={{ height: "100vh", width: "100%", position: "relative" }}>
+    <div style={{ height: "100vh", width: "100vw" }}>
       <MapContainer
-        center={center}
+        center={usCenter}
         zoom={4}
         scrollWheelZoom
         style={{ height: "100%", width: "100%" }}
-        zoomControl={false}
+        zoomControl={false} // <— we’ll put zoom somewhere else
       >
+        {/* Zoom buttons moved away from your panel */}
         <ZoomControl position="topright" />
 
-        <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+        <TileLayer
+          // NOTE: react-leaflet v4 types can be finicky; keep it simple
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          attribution="&copy; OpenStreetMap contributors"
+        />
 
-        {dots.map((d) => (
-          <CircleMarker
-            key={d.id}
-            center={[d.lat, d.lon]}
-            radius={6}
-            pathOptions={{}}
-          >
-            <Popup>
-              <div style={{ minWidth: 180 }}>
-                <strong>{d.title}</strong>
-                <div>
-                  {d.lat.toFixed(3)}, {d.lon.toFixed(3)}
+        {points.map((p) => {
+          const style = markerStyle(p.bucket);
+          return (
+            <CircleMarker
+              key={p.id}
+              center={[p.lat, p.lon]}
+              radius={6}
+              pathOptions={{
+                color: style.color,
+                weight: 2,
+                fillColor: style.fillColor,
+                fillOpacity: 0.85,
+              }}
+            >
+              <Popup>
+                <div style={{ minWidth: 220 }}>
+                  <div style={{ fontWeight: 700, marginBottom: 6 }}>
+                    {p.bucket === "fatal"
+                      ? "Accident (Fatal)"
+                      : p.bucket === "accident"
+                      ? "Accident"
+                      : "Incident"}
+                  </div>
+
+                  {p.eventDate && (
+                    <div>
+                      <b>Date:</b> {p.eventDate}
+                    </div>
+                  )}
+
+                  {(p.city || p.state) && (
+                    <div>
+                      <b>Location:</b> {[p.city, p.state].filter(Boolean).join(", ")}
+                    </div>
+                  )}
+
+                  {p.aircraft && (
+                    <div>
+                      <b>Aircraft:</b> {p.aircraft}
+                    </div>
+                  )}
+
+                  {typeof p.fatal === "number" && (
+                    <div>
+                      <b>Fatalities:</b> {p.fatal}
+                    </div>
+                  )}
+
+                  {(p.ntsbNumber || p.mkey) && (
+                    <div style={{ marginTop: 6, fontSize: 12, opacity: 0.85 }}>
+                      <div>NTSB: {p.ntsbNumber || "—"}</div>
+                      <div>MKey: {p.mkey || "—"}</div>
+                    </div>
+                  )}
+
+                  {p.detailsUrl && (
+                    <div style={{ marginTop: 8 }}>
+                      <a href={p.detailsUrl} target="_blank" rel="noreferrer">
+                        Open NTSB case page
+                      </a>
+                    </div>
+                  )}
                 </div>
-              </div>
-            </Popup>
-          </CircleMarker>
-        ))}
+              </Popup>
+            </CircleMarker>
+          );
+        })}
       </MapContainer>
 
+      {/* Your panel */}
       <div
         style={{
           position: "absolute",
           top: 12,
           left: 12,
-          zIndex: 1000,
+          zIndex: 9999,
           background: "white",
-          padding: 10,
-          borderRadius: 8,
-          width: 300,
-          fontSize: 13,
+          padding: 12,
+          borderRadius: 10,
+          boxShadow: "0 10px 30px rgba(0,0,0,0.15)",
+          width: 320,
         }}
       >
-        <div style={{ marginBottom: 6 }}>
-          <strong>Status:</strong> {status}
+        <div style={{ fontWeight: 800, fontSize: 18 }}>
+          Aviation Safety Watch (MVP)
         </div>
-        <div style={{ marginBottom: 8 }}>
-          <label>
-            Start
+
+        <div style={{ fontSize: 12, opacity: 0.8, marginTop: 4 }}>
+          {sourceLine}
+        </div>
+
+        <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 12, marginBottom: 4 }}>Start</div>
             <input
               type="date"
               value={start}
               onChange={(e) => setStart(e.target.value)}
-              style={{ width: "100%", marginTop: 4 }}
+              style={{ width: "100%" }}
             />
-          </label>
-        </div>
-        <div style={{ marginBottom: 8 }}>
-          <label>
-            End
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 12, marginBottom: 4 }}>End</div>
             <input
               type="date"
               value={end}
               onChange={(e) => setEnd(e.target.value)}
-              style={{ width: "100%", marginTop: 4 }}
+              style={{ width: "100%" }}
             />
-          </label>
+          </div>
         </div>
-        <button onClick={load} style={{ width: "100%", padding: 8 }}>
-          Reload
-        </button>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
+          <button onClick={load} style={{ padding: "6px 10px" }}>
+            Reload
+          </button>
+          <div style={{ fontSize: 13 }}>
+            Dots shown: <b>{points.length}</b>
+          </div>
+        </div>
+
+        {/* Legend */}
+        <div style={{ marginTop: 10, fontSize: 13 }}>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>Legend</div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span
+              style={{
+                width: 12,
+                height: 12,
+                borderRadius: 999,
+                background: "#ef4444",
+                border: "2px solid #b91c1c",
+                display: "inline-block",
+              }}
+            />
+            <span>Fatal accidents (red): <b>{counts.fatal}</b></span>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+            <span
+              style={{
+                width: 12,
+                height: 12,
+                borderRadius: 999,
+                background: "#fb923c",
+                border: "2px solid #c2410c",
+                display: "inline-block",
+              }}
+            />
+            <span>Accidents (orange): <b>{counts.accident}</b></span>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+            <span
+              style={{
+                width: 12,
+                height: 12,
+                borderRadius: 999,
+                background: "#facc15",
+                border: "2px solid #a16207",
+                display: "inline-block",
+              }}
+            />
+            <span>Incidents (yellow): <b>{counts.incident}</b></span>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 10, fontSize: 12 }}>
+          <b>Status:</b> {status}
+        </div>
       </div>
     </div>
   );
