@@ -1,9 +1,15 @@
 import { NextResponse } from "next/server";
 
+export const runtime = "nodejs"; // IMPORTANT: avoid Edge runtime fetch quirks
+export const dynamic = "force-dynamic";
+
 const NTSB_BASE =
   "https://api.ntsb.gov/public/api/Aviation/v1/GetCasesByDateRange";
 
-// YYYY-MM-DD
+function isYmd(s: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(s);
+}
+
 function toYMD(d: Date) {
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
@@ -18,36 +24,44 @@ function last12MonthsRange() {
   return { start, end };
 }
 
-// Try a couple parameter spellings because some docs differ by endpoint family.
+async function fetchWithTimeout(url: string, ms = 15000) {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), ms);
+
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      // keep headers minimal; some environments get picky
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    const text = await res.text();
+    return { res, text };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 async function fetchNtsb(startYmd: string, endYmd: string) {
-  const candidates: string[] = [
+  const candidates = [
     `${NTSB_BASE}?startDate=${encodeURIComponent(startYmd)}&endDate=${encodeURIComponent(endYmd)}`,
     `${NTSB_BASE}?StartDate=${encodeURIComponent(startYmd)}&EndDate=${encodeURIComponent(endYmd)}`,
-    `${NTSB_BASE}?from=${encodeURIComponent(startYmd)}&to=${encodeURIComponent(endYmd)}`
+    `${NTSB_BASE}?from=${encodeURIComponent(startYmd)}&to=${encodeURIComponent(endYmd)}`,
   ];
 
   let lastErr: any = null;
 
   for (const url of candidates) {
     try {
-      const res = await fetch(url, {
-        method: "GET",
-        headers: {
-          Accept: "application/json",
-          // Some .gov endpoints behave better if a UA exists.
-          "User-Agent": "AviationSafetyWatch/1.0"
-        },
-        cache: "no-store"
-      });
-
-      const text = await res.text();
+      const { res, text } = await fetchWithTimeout(url, 15000);
 
       if (!res.ok) {
         lastErr = {
           url,
           status: res.status,
           statusText: res.statusText,
-          bodyPreview: text.slice(0, 500)
+          bodyPreview: text.slice(0, 800),
         };
         continue;
       }
@@ -57,7 +71,12 @@ async function fetchNtsb(startYmd: string, endYmd: string) {
       try {
         data = JSON.parse(text);
       } catch (e) {
-        lastErr = { url, status: res.status, parseError: String(e), bodyPreview: text.slice(0, 500) };
+        lastErr = {
+          url,
+          status: res.status,
+          parseError: String(e),
+          bodyPreview: text.slice(0, 800),
+        };
         continue;
       }
 
@@ -73,7 +92,6 @@ async function fetchNtsb(startYmd: string, endYmd: string) {
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
 
-  // client passes ?start=YYYY-MM-DD&end=YYYY-MM-DD
   let start = searchParams.get("start") || "";
   let end = searchParams.get("end") || "";
 
@@ -81,6 +99,19 @@ export async function GET(req: Request) {
     const r = last12MonthsRange();
     start = toYMD(r.start);
     end = toYMD(r.end);
+  }
+
+  // validate (prevents bad date strings from causing upstream weirdness)
+  if (!isYmd(start) || !isYmd(end)) {
+    return NextResponse.json(
+      {
+        ok: false,
+        message: "Invalid date format. Use YYYY-MM-DD.",
+        start,
+        end,
+      },
+      { status: 400 }
+    );
   }
 
   const ntsb = await fetchNtsb(start, end);
@@ -92,7 +123,7 @@ export async function GET(req: Request) {
         start,
         end,
         message: "NTSB fetch failed",
-        error: ntsb.error
+        error: ntsb.error,
       },
       { status: 502 }
     );
@@ -106,7 +137,7 @@ export async function GET(req: Request) {
       source: "NTSB Public API",
       urlUsed: ntsb.urlUsed,
       data: ntsb.data,
-      fetchedAt: new Date().toISOString()
+      fetchedAt: new Date().toISOString(),
     },
     { status: 200 }
   );
