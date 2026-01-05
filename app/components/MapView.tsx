@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import type { LatLngExpression } from "leaflet";
 import "leaflet/dist/leaflet.css";
 import * as RL from "react-leaflet";
+import ClockWidget from "./ClockWidget";
 
 // ✅ Hard-stop the annoying TS mismatch in some Vercel builds.
 // Runtime behavior is correct; this only sidesteps broken typings.
