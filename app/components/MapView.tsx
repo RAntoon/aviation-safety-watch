@@ -81,7 +81,7 @@ export default function MapView() {
     setLoading(true);
     setStatus("Loading…");
     try {
-      const url = `/api/ntsb?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
+      const url = `/api/accidents?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
       const res = await fetch(url, { cache: "no-store" });
 
       const text = await res.text();
