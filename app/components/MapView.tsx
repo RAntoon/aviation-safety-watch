@@ -96,7 +96,7 @@ export default function MapView() {
       if (!res.ok) {
         const upstream = json?.error || json?.message || text?.slice(0, 300);
         setPoints([]);
-        setStatus(`NTSB fetch not OK (${res.status}). Open /api/ntsb to see upstreamError.`);
+        setStatus(`Accidents fetch not OK (${res.status}). Open /api/accidents to see debug.`);
         console.error("API /api/ntsb error:", { status: res.status, upstream });
         return;
       }
