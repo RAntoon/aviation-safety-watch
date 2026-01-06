@@ -1,203 +1,146 @@
 import { NextResponse } from "next/server";
-import { promises as fs } from "fs";
+import fs from "fs";
 import path from "path";
 
-type PointKind = "fatal" | "accident" | "incident";
+export const runtime = "nodejs"; // IMPORTANT: we need fs on Vercel (not Edge)
 
-type MapPoint = {
-  id: string;
-  lat: number;
-  lng: number;
-  kind: PointKind;
+type AnyRow = Record<string, any>;
 
-  date?: string;
-  city?: string;
-  state?: string;
-  country?: string;
-
-  docketUrl?: string;
-  ntsbCaseId?: string;
-  summary?: string;
-};
-
-function parseDateOnly(s?: string): Date | null {
-  if (!s) return null;
-  // Accept "YYYY-MM-DD" (or anything that starts with it)
-  const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (!m) return null;
-  const d = new Date(`${m[1]}-${m[2]}-${m[3]}T00:00:00Z`);
-  return isNaN(d.getTime()) ? null : d;
+function asArray(json: any): AnyRow[] {
+  if (Array.isArray(json)) return json;
+  // tolerate common wrappers just in case
+  if (Array.isArray(json?.data)) return json.data;
+  if (Array.isArray(json?.results)) return json.results;
+  if (Array.isArray(json?.items)) return json.items;
+  return [];
 }
 
-function toKind(rec: any): PointKind {
-  // We try a few common shapes. If you later standardize your JSON fields,
-  // we can tighten this up.
-  const fatal =
-    rec?.fatal === true ||
-    rec?.isFatal === true ||
-    Number(rec?.fatalities ?? rec?.totalFatalities ?? 0) > 0;
-
-  // “incident vs accident” varies by dataset — defaulting to "accident" if unknown.
-  const cls = String(rec?.classification ?? rec?.eventType ?? rec?.type ?? "").toLowerCase();
-  const incidentLike = cls.includes("incident");
-
-  if (fatal) return "fatal";
-  if (incidentLike) return "incident";
-  return "accident";
+function parseDate(value: any): number | null {
+  if (!value) return null;
+  const t = Date.parse(value);
+  return Number.isFinite(t) ? t : null;
 }
 
-function pickLatLng(rec: any): { lat: number; lng: number } | null {
-  // Try common field names
-  const lat =
-    rec?.lat ??
-    rec?.latitude ??
-    rec?.Latitude ??
-    rec?.location?.lat ??
-    rec?.Location?.Latitude;
+function kindFor(row: AnyRow): "fatal" | "accident" | "incident" {
+  const fatalCount =
+    Number(row?.cm_fatalInjuryCount ?? 0) ||
+    Number(row?.cm_injury_onboard_Fatal ?? 0) ||
+    Number(row?.cm_injury_onground_Fatal ?? 0);
 
-  const lng =
-    rec?.lng ??
-    rec?.lon ??
-    rec?.long ??
-    rec?.longitude ??
-    rec?.Longitude ??
-    rec?.location?.lng ??
-    rec?.location?.lon ??
-    rec?.Location?.Longitude;
+  if (fatalCount > 0 || String(row?.cm_highestInjury || "").toLowerCase() === "fatal") {
+    return "fatal";
+  }
 
-  const nlat = Number(lat);
-  const nlng = Number(lng);
-
-  if (!Number.isFinite(nlat) || !Number.isFinite(nlng)) return null;
-  if (Math.abs(nlat) > 90 || Math.abs(nlng) > 180) return null;
-
-  return { lat: nlat, lng: nlng };
-}
-
-function makeKey(city?: string, state?: string, country?: string) {
-  return [city, state, country].filter(Boolean).join(", ").trim().toLowerCase();
+  // NTSB uses cm_eventType like "ACC" (accident) and other codes (often occurrences/incidents)
+  if (String(row?.cm_eventType || "").toUpperCase() === "ACC") return "accident";
+  return "incident";
 }
 
 export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const startStr = searchParams.get("start");
+  const endStr = searchParams.get("end");
+
+  const startT = startStr ? Date.parse(startStr) : NaN;
+  const endT = endStr ? Date.parse(endStr) : NaN;
+
+  // Treat end as inclusive by extending to end-of-day
+  const endInclusive = Number.isFinite(endT) ? endT + 24 * 60 * 60 * 1000 - 1 : NaN;
+
+  const dataPath = path.join(process.cwd(), "data", "accidents.json");
+  const exists = fs.existsSync(dataPath);
+
   try {
-    const url = new URL(req.url);
-    const start = parseDateOnly(url.searchParams.get("start") ?? undefined);
-    const end = parseDateOnly(url.searchParams.get("end") ?? undefined);
-
-    // Read your local JSON
-    const accidentsPath = path.join(process.cwd(), "data", "accidents.json");
-    const raw = await fs.readFile(accidentsPath, "utf-8");
-    const data = JSON.parse(raw);
-
-    // Also read optional geocode cache (if present)
-    let geoCache: Record<string, { lat: number; lng: number }> = {};
-    try {
-      const cachePath = path.join(process.cwd(), "data", "geocode-cache.json");
-      const cacheRaw = await fs.readFile(cachePath, "utf-8");
-      geoCache = JSON.parse(cacheRaw) ?? {};
-    } catch {
-      // ok if missing/empty
+    if (!exists) {
+      return NextResponse.json(
+        { ok: false, error: `data file not found at ${dataPath}`, totalRows: 0, rowsWithCoords: 0, rowsInRange: 0, points: [] },
+        { status: 500 }
+      );
     }
 
-    const rows: any[] = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [];
+    const raw = fs.readFileSync(dataPath, "utf8");
+    const parsed = JSON.parse(raw);
+    const rows = asArray(parsed);
 
-    const points: MapPoint[] = [];
-    let skippedNoDate = 0;
-    let skippedOutOfRange = 0;
-    let skippedNoLocation = 0;
+    const totalRows = rows.length;
 
-    for (let i = 0; i < rows.length; i++) {
-      const rec = rows[i];
+    let rowsWithCoords = 0;
+    let rowsInRange = 0;
 
-      const dateStr =
-        rec?.date ??
-        rec?.eventDate ??
-        rec?.EventDate ??
-        rec?.occurrenceDate ??
-        rec?.OccurrenceDate;
+    const points = rows
+      .map((row: AnyRow) => {
+        const lat = Number(row?.cm_Latitude);
+        const lng = Number(row?.cm_Longitude);
+        const hasCoords = Number.isFinite(lat) && Number.isFinite(lng);
+        if (hasCoords) rowsWithCoords++;
 
-      const d = parseDateOnly(dateStr);
-      if (!d) {
-        skippedNoDate++;
-        continue;
-      }
+        const eventT = parseDate(row?.cm_eventDate);
+        const inRange =
+          Number.isFinite(startT) &&
+          Number.isFinite(endInclusive) &&
+          eventT !== null &&
+          eventT >= startT &&
+          eventT <= endInclusive;
 
-      if (start && d < start) {
-        skippedOutOfRange++;
-        continue;
-      }
-      if (end) {
-        // inclusive end date
-        const endPlus = new Date(end);
-        endPlus.setUTCDate(endPlus.getUTCDate() + 1);
-        if (d >= endPlus) {
-          skippedOutOfRange++;
-          continue;
-        }
-      }
+        if (inRange) rowsInRange++;
 
-      const city = rec?.city ?? rec?.City ?? rec?.location?.city ?? rec?.Location?.City;
-      const state = rec?.state ?? rec?.State ?? rec?.location?.state ?? rec?.Location?.State;
-      const country = rec?.country ?? rec?.Country ?? rec?.location?.country ?? rec?.Location?.Country ?? "USA";
+        if (!hasCoords || !inRange) return null;
 
-      // 1) direct lat/lng
-      let ll = pickLatLng(rec);
+        const ntsbNum = row?.cm_ntsbNum ? String(row.cm_ntsbNum) : undefined;
+        const docketUrl = ntsbNum ? `https://data.ntsb.gov/Docket/?NTSBNumber=${encodeURIComponent(ntsbNum)}` : undefined;
 
-      // 2) fallback to your geocode cache (city/state/country)
-      if (!ll) {
-        const key = makeKey(city, state, country);
-        if (key && geoCache[key]) {
-          ll = geoCache[key];
-        }
-      }
+        const narrative =
+          row?.prelimNarrative ??
+          row?.factualNarrative ??
+          row?.analysisNarrative ??
+          row?.narrative ??
+          undefined;
 
-      if (!ll) {
-        skippedNoLocation++;
-        continue;
-      }
+        return {
+          id: String(row?.cm_mkey ?? ntsbNum ?? `${lat},${lng},${row?.cm_eventDate ?? ""}`),
+          lat,
+          lng,
+          kind: kindFor(row),
 
-      const ntsbCaseId = rec?.ntsbCaseId ?? rec?.NtsbCaseId ?? rec?.caseNumber ?? rec?.CaseNumber ?? rec?.eventId;
-      const docketUrl = rec?.docketUrl ?? rec?.DocketUrl ?? rec?.url ?? rec?.Url;
+          date: row?.cm_eventDate ? String(row.cm_eventDate).slice(0, 10) : undefined,
+          city: row?.cm_city ?? undefined,
+          state: row?.cm_state ?? undefined,
+          country: row?.cm_country ?? undefined,
 
-      const summary =
-        rec?.summary ??
-        rec?.Summary ??
-        rec?.synopsis ??
-        rec?.Synopsis ??
-        rec?.narrative ??
-        rec?.Narrative;
+          ntsbCaseId: ntsbNum,
+          docketUrl,
+          summary: narrative ? String(narrative).slice(0, 240) : undefined,
+          narrative: narrative ? String(narrative) : undefined,
 
-      points.push({
-        id: String(rec?.id ?? rec?.Id ?? ntsbCaseId ?? `${d.toISOString()}-${i}`),
-        lat: ll.lat,
-        lng: ll.lng,
-        kind: toKind(rec),
-        date: String(dateStr).slice(0, 10),
-        city,
-        state,
-        country,
-        docketUrl,
-        ntsbCaseId: ntsbCaseId ? String(ntsbCaseId) : undefined,
-        summary: summary ? String(summary).slice(0, 280) : undefined,
-      });
-    }
+          // keep the full raw record available if you want later
+          raw: row,
+        };
+      })
+      .filter(Boolean);
+
+    // Useful to verify in Vercel logs
+    console.log("[/api/accidents] file:", { dataPath, exists, totalRows, rowsWithCoords, rowsInRange, points: points.length });
 
     return NextResponse.json({
       ok: true,
+      dataPath,
+      totalRows,
+      rowsWithCoords,
+      rowsInRange,
       points,
-      debug: {
-        totalRows: rows.length,
-        returnedPoints: points.length,
-        skippedNoDate,
-        skippedOutOfRange,
-        skippedNoLocation,
-      },
     });
   } catch (err: any) {
+    console.error("[/api/accidents] error:", err);
     return NextResponse.json(
       {
         ok: false,
         error: String(err?.message ?? err),
+        dataPath,
+        exists,
+        totalRows: 0,
+        rowsWithCoords: 0,
+        rowsInRange: 0,
+        points: [],
       },
       { status: 500 }
     );
