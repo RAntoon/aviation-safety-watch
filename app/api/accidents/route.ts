@@ -2,16 +2,21 @@ import { NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 
-export const runtime = "nodejs"; // IMPORTANT: we need fs on Vercel (not Edge)
+export const runtime = "nodejs"; // must be node for fs
 
 type AnyRow = Record<string, any>;
 
-function asArray(json: any): AnyRow[] {
-  if (Array.isArray(json)) return json;
-  // tolerate common wrappers just in case
-  if (Array.isArray(json?.data)) return json.data;
-  if (Array.isArray(json?.results)) return json.results;
-  if (Array.isArray(json?.items)) return json.items;
+function findFirstArray(value: any): AnyRow[] {
+  if (Array.isArray(value)) return value as AnyRow[];
+
+  // If it's an object, look for the first array value (common for exported JSON)
+  if (value && typeof value === "object") {
+    for (const k of Object.keys(value)) {
+      const v = (value as any)[k];
+      if (Array.isArray(v)) return v as AnyRow[];
+    }
+  }
+
   return [];
 }
 
@@ -27,11 +32,7 @@ function kindFor(row: AnyRow): "fatal" | "accident" | "incident" {
     Number(row?.cm_injury_onboard_Fatal ?? 0) ||
     Number(row?.cm_injury_onground_Fatal ?? 0);
 
-  if (fatalCount > 0 || String(row?.cm_highestInjury || "").toLowerCase() === "fatal") {
-    return "fatal";
-  }
-
-  // NTSB uses cm_eventType like "ACC" (accident) and other codes (often occurrences/incidents)
+  if (fatalCount > 0 || String(row?.cm_highestInjury || "").toLowerCase() === "fatal") return "fatal";
   if (String(row?.cm_eventType || "").toUpperCase() === "ACC") return "accident";
   return "incident";
 }
@@ -43,8 +44,6 @@ export async function GET(req: Request) {
 
   const startT = startStr ? Date.parse(startStr) : NaN;
   const endT = endStr ? Date.parse(endStr) : NaN;
-
-  // Treat end as inclusive by extending to end-of-day
   const endInclusive = Number.isFinite(endT) ? endT + 24 * 60 * 60 * 1000 - 1 : NaN;
 
   const dataPath = path.join(process.cwd(), "data", "accidents.json");
@@ -53,16 +52,23 @@ export async function GET(req: Request) {
   try {
     if (!exists) {
       return NextResponse.json(
-        { ok: false, error: `data file not found at ${dataPath}`, totalRows: 0, rowsWithCoords: 0, rowsInRange: 0, points: [] },
+        { ok: false, error: `File not found: ${dataPath}`, debug: { dataPath, exists }, totalRows: 0, rowsWithCoords: 0, rowsInRange: 0, points: [] },
         { status: 500 }
       );
     }
 
     const raw = fs.readFileSync(dataPath, "utf8");
     const parsed = JSON.parse(raw);
-    const rows = asArray(parsed);
 
-    const totalRows = rows.length;
+    const rows = findFirstArray(parsed);
+
+    const debug = {
+      dataPath,
+      exists,
+      parsedType: Array.isArray(parsed) ? "array" : typeof parsed,
+      topLevelKeys: parsed && typeof parsed === "object" && !Array.isArray(parsed) ? Object.keys(parsed).slice(0, 30) : [],
+      detectedArrayLength: rows.length,
+    };
 
     let rowsWithCoords = 0;
     let rowsInRange = 0;
@@ -87,7 +93,9 @@ export async function GET(req: Request) {
         if (!hasCoords || !inRange) return null;
 
         const ntsbNum = row?.cm_ntsbNum ? String(row.cm_ntsbNum) : undefined;
-        const docketUrl = ntsbNum ? `https://data.ntsb.gov/Docket/?NTSBNumber=${encodeURIComponent(ntsbNum)}` : undefined;
+        const docketUrl = ntsbNum
+          ? `https://data.ntsb.gov/Docket/?NTSBNumber=${encodeURIComponent(ntsbNum)}`
+          : undefined;
 
         const narrative =
           row?.prelimNarrative ??
@@ -111,20 +119,17 @@ export async function GET(req: Request) {
           docketUrl,
           summary: narrative ? String(narrative).slice(0, 240) : undefined,
           narrative: narrative ? String(narrative) : undefined,
-
-          // keep the full raw record available if you want later
           raw: row,
         };
       })
       .filter(Boolean);
 
-    // Useful to verify in Vercel logs
-    console.log("[/api/accidents] file:", { dataPath, exists, totalRows, rowsWithCoords, rowsInRange, points: points.length });
+    console.log("[/api/accidents] debug:", { ...debug, rowsWithCoords, rowsInRange, points: points.length });
 
     return NextResponse.json({
       ok: true,
-      dataPath,
-      totalRows,
+      debug,
+      totalRows: rows.length,
       rowsWithCoords,
       rowsInRange,
       points,
@@ -135,8 +140,7 @@ export async function GET(req: Request) {
       {
         ok: false,
         error: String(err?.message ?? err),
-        dataPath,
-        exists,
+        debug: { dataPath, exists },
         totalRows: 0,
         rowsWithCoords: 0,
         rowsInRange: 0,
