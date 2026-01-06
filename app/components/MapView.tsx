@@ -102,8 +102,11 @@ export default function MapView() {
       }
 
       // Expecting: { ok:true, points:[...] }
-      const nextPoints: MapPoint[] = Array.isArray(json?.points) ? json.points : [];
-      setPoints(nextPoints);
+      cconst nextPoints: MapPoint[] = Array.isArray(json?.points) ? json.points : [];
+setPoints(nextPoints);
+
+const dbg = `rows=${json?.totalRows ?? "?"}, coords=${json?.rowsWithCoords ?? "?"}, inRange=${json?.rowsInRange ?? "?"}`;
+setStatus(`OK. Loaded ${nextPoints.length} points. (${dbg})`);
 
       setStatus(`OK. Loaded ${nextPoints.length} points.`);
     } catch (e: any) {
