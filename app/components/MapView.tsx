@@ -142,7 +142,7 @@ export default function MapView() {
         }}
       >
         <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 6 }}>
-          Aviation Safety Watch (MVP)
+          Aviation Safety Watch
         </div>
         <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 10 }}>
           Data source: NTSB endpoint · Default range: last 12 months
