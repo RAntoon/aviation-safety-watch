@@ -82,7 +82,7 @@ export default function MapView() {
     setStatus("Loading…");
     try {
       // ✅ Use the API route that returns { ok, points, totalRows, rowsWithCoords, rowsInRange }
-      const url = `/api/ntsb?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
+      const url = `/api/accidents?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
       const res = await fetch(url, { cache: "no-store" });
 
       const text = await res.text();
