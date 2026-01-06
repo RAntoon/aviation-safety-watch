@@ -186,7 +186,7 @@ export default function MapView() {
           </button>
 
           <div style={{ fontSize: 12, opacity: 0.85 }}>
-            Dots shown: <b>{counts.total}</b>
+            Events: <b>{counts.total}</b>
           </div>
         </div>
 
