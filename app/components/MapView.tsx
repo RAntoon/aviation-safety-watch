@@ -81,7 +81,8 @@ export default function MapView() {
     setLoading(true);
     setStatus("Loading…");
     try {
-      const url = `/api/accidents?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
+      // ✅ Use the API route that returns { ok, points, totalRows, rowsWithCoords, rowsInRange }
+      const url = `/api/ntsb?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
       const res = await fetch(url, { cache: "no-store" });
 
       const text = await res.text();
@@ -93,7 +94,6 @@ export default function MapView() {
       }
 
       if (!res.ok) {
-        // Show useful message directly in the UI
         const upstream = json?.error || json?.message || text?.slice(0, 300);
         setPoints([]);
         setStatus(`NTSB fetch not OK (${res.status}). Open /api/ntsb to see upstreamError.`);
@@ -102,23 +102,21 @@ export default function MapView() {
       }
 
       // Expecting: { ok:true, points:[...] }
-      cconst nextPoints: MapPoint[] = Array.isArray(json?.points) ? json.points : [];
+      const nextPoints: MapPoint[] = Array.isArray(json?.points) ? json.points : [];
       setPoints(nextPoints);
 
+      // ✅ Keep the debug status (don’t overwrite it)
       const dbg = `rows=${json?.totalRows ?? "?"}, coords=${json?.rowsWithCoords ?? "?"}, inRange=${json?.rowsInRange ?? "?"}`;
       setStatus(`OK. Loaded ${nextPoints.length} points. (${dbg})`);
-
-      setStatus(`OK. Loaded ${nextPoints.length} points.`);
     } catch (e: any) {
       setPoints([]);
-      setStatus(`Fetch failed (network/runtime). See console.`);
+      setStatus("Fetch failed (network/runtime). See console.");
       console.error(e);
     } finally {
       setLoading(false);
     }
   }
 
-  // Auto-load once on mount
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -126,7 +124,7 @@ export default function MapView() {
 
   return (
     <div style={{ height: "100vh", width: "100vw", position: "relative" }}>
-      {/* ✅ NEW: Clock in the upper-right */}
+      {/* ✅ Clock in the upper-right */}
       <ClockWidget />
 
       {/* Control panel */}
@@ -258,7 +256,7 @@ export default function MapView() {
         style={{ height: "100%", width: "100%" }}
         zoomControl={false}
       >
-        {/* ✅ Zoom buttons back in bottom-right */}
+        {/* ✅ Zoom buttons in bottom-right */}
         <ZoomControl position="bottomright" />
 
         <TileLayer
@@ -281,11 +279,7 @@ export default function MapView() {
             <Popup>
               <div style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" }}>
                 <div style={{ fontWeight: 800, marginBottom: 6 }}>
-                  {p.kind === "fatal"
-                    ? "Fatal Accident"
-                    : p.kind === "accident"
-                    ? "Accident"
-                    : "Incident"}
+                  {p.kind === "fatal" ? "Fatal Accident" : p.kind === "accident" ? "Accident" : "Incident"}
                 </div>
 
                 <div style={{ fontSize: 13, marginBottom: 6 }}>
