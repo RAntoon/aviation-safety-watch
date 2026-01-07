@@ -6,6 +6,8 @@ import "leaflet/dist/leaflet.css";
 import * as RL from "react-leaflet";
 import ClockWidget from "./ClockWidget";
 
+// ✅ Hard-stop the annoying TS mismatch in some Vercel builds.
+// Runtime behavior is correct; this only sidesteps broken typings.
 const MapContainer = RL.MapContainer as unknown as React.FC<any>;
 const TileLayer = RL.TileLayer as unknown as React.FC<any>;
 const CircleMarker = RL.CircleMarker as unknown as React.FC<any>;
@@ -20,14 +22,18 @@ type MapPoint = {
   lng: number;
   kind: PointKind;
 
+  // display fields (safe optional)
   date?: string;
   city?: string;
   state?: string;
   country?: string;
 
-  ntsbCaseId?: string;
+  // NTSB / docket link
   docketUrl?: string;
+  ntsbCaseId?: string;
   summary?: string;
+
+  // ✅ NEW: aircraft type/model (SR22, B737, etc.)
   aircraftType?: string;
 };
 
@@ -46,54 +52,222 @@ function last12MonthsRange() {
 }
 
 function colorFor(kind: PointKind) {
-  if (kind === "fatal") return "#d32f2f";
-  if (kind === "accident") return "#fb8c00";
-  return "#fdd835";
+  if (kind === "fatal") return "#d32f2f"; // red
+  if (kind === "accident") return "#fb8c00"; // orange
+  return "#fdd835"; // yellow
 }
 
 export default function MapView() {
   const defaultRange = useMemo(() => last12MonthsRange(), []);
-  const [start, setStart] = useState(isoDate(defaultRange.start));
-  const [end, setEnd] = useState(isoDate(defaultRange.end));
-  const [points, setPoints] = useState<MapPoint[]>([]);
-  const [status, setStatus] = useState("Idle");
-  const [loading, setLoading] = useState(false);
+  const [start, setStart] = useState<string>(isoDate(defaultRange.start));
+  const [end, setEnd] = useState<string>(isoDate(defaultRange.end));
 
-  const center: LatLngExpression = [39.5, -98.35];
+  const [points, setPoints] = useState<MapPoint[]>([]);
+  const [status, setStatus] = useState<string>("Idle");
+  const [loading, setLoading] = useState<boolean>(false);
+
+  const center: LatLngExpression = useMemo(() => [39.5, -98.35], []); // continental US
+
+  const counts = useMemo(() => {
+    let fatal = 0,
+      accident = 0,
+      incident = 0;
+    for (const p of points) {
+      if (p.kind === "fatal") fatal++;
+      else if (p.kind === "accident") accident++;
+      else incident++;
+    }
+    return { fatal, accident, incident, total: points.length };
+  }, [points]);
 
   async function load() {
     setLoading(true);
+    setStatus("Loading…");
     try {
-      const res = await fetch(`/api/accidents?start=${start}&end=${end}`, {
-        cache: "no-store",
-      });
-      const json = await res.json();
-      setPoints(json.points || []);
-      setStatus(
-        `OK. Loaded ${json.points?.length ?? 0} points.`
-      );
-    } catch {
-      setStatus("Fetch failed");
+      const url = `/api/accidents?start=${encodeURIComponent(
+        start
+      )}&end=${encodeURIComponent(end)}`;
+      const res = await fetch(url, { cache: "no-store" });
+
+      const text = await res.text();
+      let json: any = null;
+      try {
+        json = JSON.parse(text);
+      } catch {
+        // leave null
+      }
+
+      if (!res.ok) {
+        const upstream = json?.error || json?.message || text?.slice(0, 300);
+        setPoints([]);
+        setStatus(
+          `Accidents fetch not OK (${res.status}). Check /api/accidents output & Vercel logs.`
+        );
+        console.error("API /api/accidents error:", { status: res.status, upstream });
+        return;
+      }
+
+      const nextPoints: MapPoint[] = Array.isArray(json?.points) ? json.points : [];
+      setPoints(nextPoints);
+
+      const dbg = `rows=${json?.totalRows ?? "?"}, coords=${json?.rowsWithCoords ?? "?"}, inRange=${json?.rowsInRange ?? "?"}`;
+      setStatus(`OK. Loaded ${nextPoints.length} points. (${dbg})`);
+    } catch (e: any) {
+      setPoints([]);
+      setStatus(`Fetch failed (network/runtime). See console.`);
+      console.error(e);
     } finally {
       setLoading(false);
     }
   }
 
+  // Auto-load once on mount
   useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
     <div style={{ height: "100vh", width: "100vw", position: "relative" }}>
+      {/* Clock in the upper-right */}
       <ClockWidget />
 
+      {/* ✅ RESTORED: Control panel / “search bar” (top-left) */}
+      <div
+        style={{
+          position: "absolute",
+          zIndex: 1000,
+          top: 12,
+          left: 12,
+          width: 320,
+          padding: 14,
+          borderRadius: 12,
+          background: "rgba(255,255,255,0.95)",
+          boxShadow: "0 10px 30px rgba(0,0,0,0.15)",
+          fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
+        }}
+      >
+        <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 6 }}>
+          Aviation Safety Watch
+        </div>
+
+        <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 10 }}>
+          Data source: NTSB JSON blocks · Default range: last 12 months
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Start</div>
+            <input
+              type="date"
+              value={start}
+              onChange={(e) => setStart(e.target.value)}
+              style={{ width: "100%", padding: 8, borderRadius: 8, border: "1px solid #ddd" }}
+            />
+          </div>
+
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>End</div>
+            <input
+              type="date"
+              value={end}
+              onChange={(e) => setEnd(e.target.value)}
+              style={{ width: "100%", padding: 8, borderRadius: 8, border: "1px solid #ddd" }}
+            />
+          </div>
+        </div>
+
+        <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10 }}>
+          <button
+            onClick={load}
+            disabled={loading}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 10,
+              border: "1px solid #ddd",
+              background: loading ? "#f4f4f4" : "#fff",
+              cursor: loading ? "not-allowed" : "pointer",
+              fontWeight: 700,
+            }}
+          >
+            {loading ? "Loading…" : "Reload"}
+          </button>
+
+          <div style={{ fontSize: 12, opacity: 0.85 }}>
+            Events: <b>{counts.total}</b>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontWeight: 800, marginBottom: 6 }}>Legend</div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+            <span
+              style={{
+                width: 14,
+                height: 14,
+                borderRadius: 7,
+                background: colorFor("fatal"),
+                display: "inline-block",
+              }}
+            />
+            <div style={{ fontSize: 13 }}>
+              Fatal accidents (red): <b>{counts.fatal}</b>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+            <span
+              style={{
+                width: 14,
+                height: 14,
+                borderRadius: 7,
+                background: colorFor("accident"),
+                display: "inline-block",
+              }}
+            />
+            <div style={{ fontSize: 13 }}>
+              Accidents (orange): <b>{counts.accident}</b>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span
+              style={{
+                width: 14,
+                height: 14,
+                borderRadius: 7,
+                background: colorFor("incident"),
+                display: "inline-block",
+              }}
+            />
+            <div style={{ fontSize: 13 }}>
+              Incidents (yellow): <b>{counts.incident}</b>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 10, fontSize: 12, lineHeight: 1.3 }}>
+          <b>Status:</b>{" "}
+          <span
+            style={{
+              color: status.includes("not OK") || status.includes("failed") ? "#d32f2f" : "#222",
+            }}
+          >
+            {status}
+          </span>
+        </div>
+      </div>
+
+      {/* Map */}
       <MapContainer
         center={center}
         zoom={4}
         scrollWheelZoom
-        zoomControl={false}
         style={{ height: "100%", width: "100%" }}
+        zoomControl={false}
       >
+        {/* Zoom buttons bottom-right */}
         <ZoomControl position="bottomright" />
 
         <TileLayer
@@ -114,53 +288,45 @@ export default function MapView() {
             }}
           >
             <Popup>
-              <div style={{ fontFamily: "system-ui" }}>
-                <div
-                  style={{
-                    fontWeight: 800,
-                    marginBottom: 6,
-                  }}
-                >
-                  {p.kind === "fatal"
+              <div style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" }}>
+                <div style={{ fontWeight: 800, marginBottom: 6 }}>
+                  {(p.kind === "fatal"
                     ? "Fatal Accident"
                     : p.kind === "accident"
                     ? "Accident"
-                    : "Incident"}
-                  {p.aircraftType ? ` – ${p.aircraftType}` : ""}
+                    : "Incident") + (p.aircraftType ? ` - ${p.aircraftType}` : "")}
                 </div>
 
-                {p.date && (
-                  <div>
-                    <b>Date:</b> {p.date}
-                  </div>
-                )}
-                {(p.city || p.state || p.country) && (
-                  <div>
-                    <b>Location:</b>{" "}
-                    {[p.city, p.state, p.country]
-                      .filter(Boolean)
-                      .join(", ")}
-                  </div>
-                )}
-                {p.ntsbCaseId && (
-                  <div>
-                    <b>NTSB Case:</b> {p.ntsbCaseId}
-                  </div>
-                )}
+                <div style={{ fontSize: 13, marginBottom: 6 }}>
+                  {p.date ? (
+                    <div>
+                      <b>Date:</b> {p.date}
+                    </div>
+                  ) : null}
 
-                {p.summary && (
-                  <div style={{ marginTop: 8 }}>{p.summary}</div>
-                )}
+                  {p.city || p.state || p.country ? (
+                    <div>
+                      <b>Location:</b> {[p.city, p.state, p.country].filter(Boolean).join(", ")}
+                    </div>
+                  ) : null}
 
-                {p.docketUrl && (
-                  <a
-                    href={p.docketUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{ fontWeight: 800, display: "block", marginTop: 10 }}
-                  >
+                  {p.ntsbCaseId ? (
+                    <div>
+                      <b>NTSB Case:</b> {p.ntsbCaseId}
+                    </div>
+                  ) : null}
+                </div>
+
+                {p.summary ? (
+                  <div style={{ fontSize: 12, opacity: 0.9, marginBottom: 8 }}>{p.summary}</div>
+                ) : null}
+
+                {p.docketUrl ? (
+                  <a href={p.docketUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>
                     Open NTSB docket →
                   </a>
+                ) : (
+                  <div style={{ fontSize: 12, opacity: 0.75 }}>(No docket link provided)</div>
                 )}
               </div>
             </Popup>
