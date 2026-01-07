@@ -1,24 +1,37 @@
-import "leaflet/dist/leaflet.css";
-// app/layout.tsx
-export const metadata = {
+import "./globals.css";
+import type { Metadata } from "next";
+import Script from "next/script";
+
+export const metadata: Metadata = {
   title: "Aviation Safety Watch",
-  description: "Live US aviation safety events map (NTSB-backed MVP)",
+  description: "Global aviation accident and incident visualization",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html lang="en">
       <head>
-        <link
-          rel="stylesheet"
-          href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-          crossOrigin=""
+        {/* Google Analytics 4 */}
+        <Script
+          src="https://www.googletagmanager.com/gtag/js?id=G-CH8DN2MYWB"
+          strategy="afterInteractive"
         />
+        <Script id="ga4-init" strategy="afterInteractive">
+          {`
+            window.dataLayer = window.dataLayer || [];
+            function gtag(){dataLayer.push(arguments);}
+            gtag('js', new Date());
+            gtag('config', 'G-CH8DN2MYWB', {
+              anonymize_ip: true,
+            });
+          `}
+        </Script>
       </head>
-      <body style={{ margin: 0, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial" }}>
-        {children}
-      </body>
+      <body>{children}</body>
     </html>
   );
 }
