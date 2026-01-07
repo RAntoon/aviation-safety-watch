@@ -7,6 +7,7 @@ import * as RL from "react-leaflet";
 import ClockWidget from "./ClockWidget";
 
 // ✅ Hard-stop the annoying TS mismatch in some Vercel builds.
+// Runtime behavior is correct; this only sidesteps broken typings.
 const MapContainer = RL.MapContainer as unknown as React.FC<any>;
 const TileLayer = RL.TileLayer as unknown as React.FC<any>;
 const CircleMarker = RL.CircleMarker as unknown as React.FC<any>;
@@ -26,15 +27,15 @@ type MapPoint = {
   state?: string;
   country?: string;
 
-  ntsbCaseId?: string;
   docketUrl?: string;
+  ntsbCaseId?: string;
 
+  // NEW-ish fields you already added
   aircraftType?: string;
-  tailNumber?: string;
-  operatorName?: string;
+  tail?: string;
 
+  // summary text (already in your pipeline)
   summary?: string;
-  narrative?: string;
 };
 
 function isoDate(d: Date) {
@@ -52,9 +53,9 @@ function last12MonthsRange() {
 }
 
 function colorFor(kind: PointKind) {
-  if (kind === "fatal") return "#d32f2f";
-  if (kind === "accident") return "#fb8c00";
-  return "#fdd835";
+  if (kind === "fatal") return "#d32f2f"; // red
+  if (kind === "accident") return "#fb8c00"; // orange
+  return "#fdd835"; // yellow
 }
 
 function labelFor(kind: PointKind) {
@@ -63,17 +64,39 @@ function labelFor(kind: PointKind) {
   return "Incident";
 }
 
+// ✅ Keep only the “high-level” first section.
+// - Unescape the &#x0D; stuff
+// - Take the first paragraph-ish break OR cap by length
+function getShortNarrative(raw?: string) {
+  if (!raw) return "";
+
+  const cleaned = String(raw)
+    .replace(/&#x0D;|&#13;|\r/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  // Split on blank line (paragraph break)
+  const firstPara = cleaned.split(/\n\s*\n/)[0]?.trim() ?? "";
+
+  // If the first paragraph is still huge, cap it.
+  const cap = 380;
+  const out = firstPara.length > cap ? firstPara.slice(0, cap).trimEnd() + "…" : firstPara;
+
+  return out;
+}
+
 export default function MapView() {
   const defaultRange = useMemo(() => last12MonthsRange(), []);
   const [start, setStart] = useState<string>(isoDate(defaultRange.start));
   const [end, setEnd] = useState<string>(isoDate(defaultRange.end));
 
-  const [q, setQ] = useState<string>(""); // ✅ search bar
+  const [search, setSearch] = useState<string>("");
+
   const [points, setPoints] = useState<MapPoint[]>([]);
   const [status, setStatus] = useState<string>("Idle");
   const [loading, setLoading] = useState<boolean>(false);
 
-  const center: LatLngExpression = useMemo(() => [39.5, -98.35], []);
+  const center: LatLngExpression = useMemo(() => [39.5, -98.35], []); // default view
 
   const counts = useMemo(() => {
     let fatal = 0,
@@ -91,31 +114,26 @@ export default function MapView() {
     setLoading(true);
     setStatus("Loading…");
     try {
-      const url =
-        `/api/accidents?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}` +
-        (q.trim() ? `&q=${encodeURIComponent(q.trim())}` : "");
-
+      const url = `/api/accidents?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&q=${encodeURIComponent(
+        search.trim()
+      )}`;
       const res = await fetch(url, { cache: "no-store" });
-      const text = await res.text();
 
-      let json: any = null;
-      try {
-        json = JSON.parse(text);
-      } catch {
-        // leave null
-      }
+      const json = await res.json().catch(() => null);
 
-      if (!res.ok) {
+      if (!res.ok || !json?.ok) {
         setPoints([]);
         setStatus(`Accidents fetch not OK (${res.status}). Check /api/accidents output & Vercel logs.`);
-        console.error("API /api/accidents error:", { status: res.status, body: text?.slice(0, 500) });
+        console.error("API /api/accidents error:", { status: res.status, json });
         return;
       }
 
       const nextPoints: MapPoint[] = Array.isArray(json?.points) ? json.points : [];
       setPoints(nextPoints);
 
-      const dbg = `rows=${json?.totalRows ?? "?"}, inRange=${json?.rowsInRange ?? "?"}, coords=${json?.rowsWithCoords ?? "?"}, matched=${json?.rowsMatchedQuery ?? "?"}`;
+      const dbg = `rows=${json?.totalRows ?? "?"}, coords=${json?.rowsWithCoords ?? "?"}, inRange=${json?.rowsInRange ?? "?"}, matched=${
+        json?.matched ?? nextPoints.length
+      }`;
       setStatus(`OK. Loaded ${nextPoints.length} points. (${dbg})`);
     } catch (e: any) {
       setPoints([]);
@@ -142,7 +160,7 @@ export default function MapView() {
           zIndex: 1000,
           top: 12,
           left: 12,
-          width: 340,
+          width: 320,
           padding: 14,
           borderRadius: 12,
           background: "rgba(255,255,255,0.95)",
@@ -151,11 +169,8 @@ export default function MapView() {
         }}
       >
         <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 6 }}>Aviation Safety Watch</div>
-        <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 10 }}>
-          Data source: NTSB JSON blocks · Default range: last 12 months
-        </div>
+        <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 10 }}>Data source: NTSB JSON blocks · Default range: last 12 months</div>
 
-        {/* Dates */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
           <div>
             <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Start</div>
@@ -177,17 +192,14 @@ export default function MapView() {
           </div>
         </div>
 
-        {/* ✅ Search bar (small) */}
+        {/* ✅ Search bar (same as before) */}
         <div style={{ marginTop: 10 }}>
           <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Search</div>
           <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
             placeholder="e.g., SR22, Cirrus, N123AB, Southwest…"
             style={{ width: "100%", padding: 8, borderRadius: 8, border: "1px solid #ddd" }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") load();
-            }}
           />
         </div>
 
@@ -239,15 +251,14 @@ export default function MapView() {
 
         <div style={{ marginTop: 10, fontSize: 12, lineHeight: 1.3 }}>
           <b>Status:</b>{" "}
-          <span style={{ color: status.includes("not OK") || status.includes("failed") ? "#d32f2f" : "#222" }}>
-            {status}
-          </span>
+          <span style={{ color: status.includes("not OK") || status.includes("failed") ? "#d32f2f" : "#222" }}>{status}</span>
         </div>
       </div>
 
       {/* Map */}
       <MapContainer center={center} zoom={4} scrollWheelZoom style={{ height: "100%", width: "100%" }} zoomControl={false}>
         <ZoomControl position="bottomright" />
+
         <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
 
         {points.map((p) => (
@@ -262,21 +273,22 @@ export default function MapView() {
               fillOpacity: 0.9,
             }}
           >
-            <Popup>
-              <div style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif", maxWidth: 360 }}>
-                <div style={{ fontWeight: 900, fontSize: 20, marginBottom: 10 }}>
+            {/* ✅ Do NOT auto-pan / zoom the map when opening */}
+            <Popup autoPan={false} keepInView={false} closeOnClick={false} autoClose={false} maxWidth={340}>
+              <div style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" }}>
+                <div style={{ fontWeight: 800, marginBottom: 6 }}>
                   {labelFor(p.kind)}
                   {p.aircraftType ? ` - ${p.aircraftType}` : ""}
                 </div>
 
-                <div style={{ fontSize: 18, lineHeight: 1.25, marginBottom: 10 }}>
+                <div style={{ fontSize: 13, marginBottom: 8 }}>
                   {p.date ? (
                     <div>
                       <b>Date:</b> {p.date}
                     </div>
                   ) : null}
 
-                  {p.city || p.state || p.country ? (
+                  {(p.city || p.state || p.country) ? (
                     <div>
                       <b>Location:</b> {[p.city, p.state, p.country].filter(Boolean).join(", ")}
                     </div>
@@ -288,31 +300,26 @@ export default function MapView() {
                     </div>
                   ) : null}
 
-                  {p.tailNumber ? (
+                  {p.tail ? (
                     <div>
-                      <b>Tail #:</b> {p.tailNumber}
-                    </div>
-                  ) : null}
-
-                  {p.operatorName ? (
-                    <div>
-                      <b>Operator:</b> {p.operatorName}
+                      <b>Tail #:</b> {p.tail}
                     </div>
                   ) : null}
                 </div>
 
-                {p.narrative || p.summary ? (
-                  <div style={{ fontSize: 16, opacity: 0.95, marginBottom: 14, whiteSpace: "pre-wrap" }}>
-                    {p.narrative ?? p.summary}
+                {/* ✅ show only a short “high-level” narrative */}
+                {p.summary ? (
+                  <div style={{ fontSize: 12, opacity: 0.92, marginBottom: 10, whiteSpace: "pre-wrap" }}>
+                    {getShortNarrative(p.summary)}
                   </div>
                 ) : null}
 
                 {p.docketUrl ? (
-                  <a href={p.docketUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 900, fontSize: 26, color: "#1e73be" }}>
+                  <a href={p.docketUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 900 }}>
                     Open NTSB docket →
                   </a>
                 ) : (
-                  <div style={{ fontSize: 13, opacity: 0.75 }}>(No docket link available)</div>
+                  <div style={{ fontSize: 12, opacity: 0.75 }}>(No docket link provided by API yet)</div>
                 )}
               </div>
             </Popup>
