@@ -2,14 +2,21 @@ import { NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 
-export const runtime = "nodejs"; // must be node for fs
+export const runtime = "nodejs"; // required for fs on Vercel
 
 type AnyRow = Record<string, any>;
 
-function parseDate(value: any): number | null {
-  if (!value) return null;
-  const t = Date.parse(value);
-  return Number.isFinite(t) ? t : null;
+type ManifestEntry = {
+  from: string; // YYYY-MM-DD
+  to: string;   // YYYY-MM-DD
+  file: string; // filename inside /data
+};
+
+function isoDate(d: Date) {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 function last12MonthsRange() {
@@ -17,6 +24,12 @@ function last12MonthsRange() {
   const start = new Date(end);
   start.setFullYear(end.getFullYear() - 1);
   return { start, end };
+}
+
+function parseDate(value: any): number | null {
+  if (!value) return null;
+  const t = Date.parse(value);
+  return Number.isFinite(t) ? t : null;
 }
 
 function kindFor(row: AnyRow): "fatal" | "accident" | "incident" {
@@ -30,16 +43,21 @@ function kindFor(row: AnyRow): "fatal" | "accident" | "incident" {
   return "incident";
 }
 
-// ✅ More robust than your current findFirstArray():
-// - handles top-level array
-// - handles object with nested array
-// - handles numeric-keyed object: { "0": {...}, "1": {...} }
-// - handles double-encoded JSON strings
+/**
+ * Robustly extract rows from many export shapes:
+ * - top-level array
+ * - object with first array-valued key
+ * - numeric-keyed object { "0": {...}, "1": {...} }
+ * - double-encoded JSON string containing JSON
+ */
 function extractRows(parsed: any): AnyRow[] {
-  // double-encoded JSON: parsed is a string containing JSON
+  // double-encoded JSON
   if (typeof parsed === "string") {
     const s = parsed.trim();
-    if ((s.startsWith("[") && s.endsWith("]")) || (s.startsWith("{") && s.endsWith("}"))) {
+    if (
+      (s.startsWith("[") && s.endsWith("]")) ||
+      (s.startsWith("{") && s.endsWith("}"))
+    ) {
       try {
         return extractRows(JSON.parse(s));
       } catch {
@@ -49,18 +67,16 @@ function extractRows(parsed: any): AnyRow[] {
     return [];
   }
 
-  // top-level array
   if (Array.isArray(parsed)) return parsed as AnyRow[];
 
-  // object cases
   if (parsed && typeof parsed === "object") {
-    // 1) first array-valued property
+    // first array-valued property
     for (const k of Object.keys(parsed)) {
       const v = (parsed as any)[k];
       if (Array.isArray(v)) return v as AnyRow[];
     }
 
-    // 2) numeric-keyed object like { "0": {...}, "1": {...} }
+    // numeric-keyed object
     const keys = Object.keys(parsed);
     if (keys.length > 0 && keys.every((k) => /^\d+$/.test(k))) {
       const values = keys
@@ -75,28 +91,32 @@ function extractRows(parsed: any): AnyRow[] {
   return [];
 }
 
+function overlaps(aStart: number, aEndInclusive: number, bStart: number, bEndInclusive: number) {
+  return !(bEndInclusive < aStart || bStart > aEndInclusive);
+}
+
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
 
-  // ✅ Default to last 12 months if params are missing
+  // ✅ Default to last 12 months if not specified
   const def = last12MonthsRange();
-  const startStr = searchParams.get("start") ?? def.start.toISOString().slice(0, 10);
-  const endStr = searchParams.get("end") ?? def.end.toISOString().slice(0, 10);
+  const startStr = searchParams.get("start") ?? isoDate(def.start);
+  const endStr = searchParams.get("end") ?? isoDate(def.end);
 
   const startT = Date.parse(startStr);
   const endT = Date.parse(endStr);
   const endInclusive = Number.isFinite(endT) ? endT + 24 * 60 * 60 * 1000 - 1 : NaN;
 
   const manifestPath = path.join(process.cwd(), "data", "manifest.json");
-  const exists = fs.existsSync(dataPath);
+  const manifestExists = fs.existsSync(manifestPath);
 
   try {
-    if (!exists) {
+    if (!manifestExists) {
       return NextResponse.json(
         {
           ok: false,
-          error: `File not found: ${dataPath}`,
-          debug: { dataPath, exists },
+          error: `manifest.json not found at ${manifestPath}`,
+          debug: { manifestPath, manifestExists },
           totalRows: 0,
           rowsWithCoords: 0,
           rowsInRange: 0,
@@ -107,36 +127,56 @@ export async function GET(req: Request) {
     }
 
     const manifestRaw = fs.readFileSync(manifestPath, "utf8");
-    const manifest = JSON.parse(manifestRaw) as Array<{
-      from: string;
-      to: string;
-      file: string;
-    }>;
+    const manifestParsed = JSON.parse(manifestRaw);
 
-    let rows: AnyRow[] = [];
-
-    for (const entry of manifest) {
-      const fileStart = Date.parse(entry.from);
-      const fileEnd = Date.parse(entry.to);
-
-      if (
-        Number.isFinite(startT) &&
-        Number.isFinite(endInclusive) &&
-        (fileEnd < startT || fileStart > endInclusive)
-      ) {
-        continue; // no overlap
-      }
-
-      const filePath = path.join(process.cwd(), "data", entry.file);
-      if (!fs.existsSync(filePath)) continue;
-
-      const raw = fs.readFileSync(filePath, "utf8");
-      const parsed = JSON.parse(raw);
-      rows.push(...findFirstArray(parsed));
+    if (!Array.isArray(manifestParsed)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `manifest.json must be an array of {from,to,file}`,
+          debug: { manifestPath, manifestType: typeof manifestParsed },
+          totalRows: 0,
+          rowsWithCoords: 0,
+          rowsInRange: 0,
+          points: [],
+        },
+        { status: 500 }
+      );
     }
 
-    const parsed = JSON.parse(raw);
-    const rows = extractRows(parsed);
+    const manifest: ManifestEntry[] = manifestParsed;
+
+    // Determine which blocks overlap requested window
+    const wantedEntries: ManifestEntry[] = [];
+    for (const entry of manifest) {
+      const fileStart = Date.parse(entry.from);
+      const fileEnd = Date.parse(entry.to) + 24 * 60 * 60 * 1000 - 1;
+
+      if (!Number.isFinite(fileStart) || !Number.isFinite(fileEnd)) continue;
+      if (!Number.isFinite(startT) || !Number.isFinite(endInclusive)) continue;
+
+      if (overlaps(startT, endInclusive, fileStart, fileEnd)) {
+        wantedEntries.push(entry);
+      }
+    }
+
+    // Load rows from overlapping blocks only
+    let rows: AnyRow[] = [];
+    const loadedFiles: string[] = [];
+    const missingFiles: string[] = [];
+
+    for (const entry of wantedEntries) {
+      const filePath = path.join(process.cwd(), "data", entry.file);
+      if (!fs.existsSync(filePath)) {
+        missingFiles.push(entry.file);
+        continue;
+      }
+      const raw = fs.readFileSync(filePath, "utf8");
+      const parsed = JSON.parse(raw);
+      const fileRows = extractRows(parsed);
+      rows.push(...fileRows);
+      loadedFiles.push(entry.file);
+    }
 
     let rowsWithCoords = 0;
     let rowsInRange = 0;
@@ -144,6 +184,7 @@ export async function GET(req: Request) {
     const points = rows
       .map((row: AnyRow) => {
         const eventT = parseDate(row?.cm_eventDate);
+
         const inRange =
           Number.isFinite(startT) &&
           Number.isFinite(endInclusive) &&
@@ -153,7 +194,7 @@ export async function GET(req: Request) {
 
         if (inRange) rowsInRange++;
 
-        // ✅ Use provided lat/long ONLY (we’ll add city/state geocode next)
+        // ✅ Use provided lat/long only (we’ll add city/state geocode fallback next)
         const lat = Number(row?.cm_Latitude);
         const lng = Number(row?.cm_Longitude);
         const hasCoords = Number.isFinite(lat) && Number.isFinite(lng);
@@ -162,6 +203,8 @@ export async function GET(req: Request) {
         if (!inRange || !hasCoords) return null;
 
         const ntsbNum = row?.cm_ntsbNum ? String(row.cm_ntsbNum) : undefined;
+
+        // Note: docket may not be released; we’ll gate this later using cm_docketDate
         const docketUrl = ntsbNum
           ? `https://data.ntsb.gov/Docket/?NTSBNumber=${encodeURIComponent(ntsbNum)}`
           : undefined;
@@ -193,19 +236,13 @@ export async function GET(req: Request) {
       .filter(Boolean);
 
     const debug = {
-      dataPath,
-      exists,
-      fileBytes,
-      rawHead: head,
-      parsedType: Array.isArray(parsed) ? "array" : typeof parsed,
-      topLevelKeys:
-        parsed && typeof parsed === "object" && !Array.isArray(parsed)
-          ? Object.keys(parsed).slice(0, 30)
-          : [],
-      detectedRows: rows.length,
-      sampleRowKeys: rows[0] ? Object.keys(rows[0]).slice(0, 40) : [],
       startStr,
       endStr,
+      manifestEntries: manifest.length,
+      overlappingBlocks: wantedEntries.length,
+      loadedFiles,
+      missingFiles,
+      detectedRows: rows.length,
       rowsInRange,
       rowsWithCoords,
       points: points.length,
@@ -227,7 +264,6 @@ export async function GET(req: Request) {
       {
         ok: false,
         error: String(err?.message ?? err),
-        debug: { dataPath, exists },
         totalRows: 0,
         rowsWithCoords: 0,
         rowsInRange: 0,
