@@ -1,10 +1,8 @@
-import "./globals.css";
-import type { Metadata } from "next";
-import Script from "next/script";
+import "leaflet/dist/leaflet.css";
 
-export const metadata: Metadata = {
+// app/layout.tsx
+export const metadata = {
   title: "Aviation Safety Watch",
-  description: "Global aviation accident and incident visualization",
 };
 
 export default function RootLayout({
@@ -14,24 +12,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <head>
-        {/* Google Analytics 4 */}
-        <Script
-          src="https://www.googletagmanager.com/gtag/js?id=G-CH8DN2MYWB"
-          strategy="afterInteractive"
-        />
-        <Script id="ga4-init" strategy="afterInteractive">
-          {`
-            window.dataLayer = window.dataLayer || [];
-            function gtag(){dataLayer.push(arguments);}
-            gtag('js', new Date());
-            gtag('config', 'G-CH8DN2MYWB', {
-              anonymize_ip: true,
-            });
-          `}
-        </Script>
-      </head>
-      <body>{children}</body>
+      <body style={{ margin: 0 }}>{children}</body>
     </html>
   );
 }
