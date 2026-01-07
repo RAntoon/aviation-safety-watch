@@ -106,9 +106,34 @@ export async function GET(req: Request) {
       );
     }
 
-    const raw = fs.readFileSync(dataPath, "utf8");
-    const fileBytes = Buffer.byteLength(raw, "utf8");
-    const head = raw.slice(0, 200).replace(/\s+/g, " ").trim();
+    const manifestRaw = fs.readFileSync(manifestPath, "utf8");
+    const manifest = JSON.parse(manifestRaw) as Array<{
+      from: string;
+      to: string;
+      file: string;
+    }>;
+
+    let rows: AnyRow[] = [];
+
+    for (const entry of manifest) {
+      const fileStart = Date.parse(entry.from);
+      const fileEnd = Date.parse(entry.to);
+
+      if (
+        Number.isFinite(startT) &&
+        Number.isFinite(endInclusive) &&
+        (fileEnd < startT || fileStart > endInclusive)
+      ) {
+        continue; // no overlap
+      }
+
+      const filePath = path.join(process.cwd(), "data", entry.file);
+      if (!fs.existsSync(filePath)) continue;
+
+      const raw = fs.readFileSync(filePath, "utf8");
+      const parsed = JSON.parse(raw);
+      rows.push(...findFirstArray(parsed));
+    }
 
     const parsed = JSON.parse(raw);
     const rows = extractRows(parsed);
