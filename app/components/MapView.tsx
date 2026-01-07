@@ -6,8 +6,7 @@ import "leaflet/dist/leaflet.css";
 import * as RL from "react-leaflet";
 import ClockWidget from "./ClockWidget";
 
-// ✅ Hard-stop the annoying TS mismatch in some Vercel builds.
-// Runtime behavior is correct; this only sidesteps broken typings.
+// ✅ Hard-stop TS mismatch in some Vercel builds.
 const MapContainer = RL.MapContainer as unknown as React.FC<any>;
 const TileLayer = RL.TileLayer as unknown as React.FC<any>;
 const CircleMarker = RL.CircleMarker as unknown as React.FC<any>;
@@ -30,11 +29,9 @@ type MapPoint = {
   docketUrl?: string;
   ntsbCaseId?: string;
 
-  // NEW-ish fields you already added
   aircraftType?: string;
   tail?: string;
 
-  // summary text (already in your pipeline)
   summary?: string;
 };
 
@@ -53,9 +50,9 @@ function last12MonthsRange() {
 }
 
 function colorFor(kind: PointKind) {
-  if (kind === "fatal") return "#d32f2f"; // red
-  if (kind === "accident") return "#fb8c00"; // orange
-  return "#fdd835"; // yellow
+  if (kind === "fatal") return "#d32f2f";
+  if (kind === "accident") return "#fb8c00";
+  return "#fdd835";
 }
 
 function labelFor(kind: PointKind) {
@@ -64,39 +61,50 @@ function labelFor(kind: PointKind) {
   return "Incident";
 }
 
-// ✅ Keep only the “high-level” first section.
-// - Unescape the &#x0D; stuff
-// - Take the first paragraph-ish break OR cap by length
 function getShortNarrative(raw?: string) {
   if (!raw) return "";
-
   const cleaned = String(raw)
     .replace(/&#x0D;|&#13;|\r/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
-  // Split on blank line (paragraph break)
   const firstPara = cleaned.split(/\n\s*\n/)[0]?.trim() ?? "";
-
-  // If the first paragraph is still huge, cap it.
   const cap = 380;
-  const out = firstPara.length > cap ? firstPara.slice(0, cap).trimEnd() + "…" : firstPara;
+  return firstPara.length > cap ? firstPara.slice(0, cap).trimEnd() + "…" : firstPara;
+}
 
-  return out;
+// ✅ tiny hook to detect mobile-ish widths
+function useIsMobile(maxWidth = 768) {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const update = () => setIsMobile(window.innerWidth <= maxWidth);
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, [maxWidth]);
+  return isMobile;
 }
 
 export default function MapView() {
   const defaultRange = useMemo(() => last12MonthsRange(), []);
   const [start, setStart] = useState<string>(isoDate(defaultRange.start));
   const [end, setEnd] = useState<string>(isoDate(defaultRange.end));
-
   const [search, setSearch] = useState<string>("");
 
   const [points, setPoints] = useState<MapPoint[]>([]);
   const [status, setStatus] = useState<string>("Idle");
   const [loading, setLoading] = useState<boolean>(false);
 
-  const center: LatLngExpression = useMemo(() => [39.5, -98.35], []); // default view
+  const isMobile = useIsMobile(820);
+  const [panelOpen, setPanelOpen] = useState<boolean>(true);
+
+  // On mobile: start collapsed (button shows). On desktop: always open.
+  useEffect(() => {
+    if (isMobile) setPanelOpen(false);
+    else setPanelOpen(true);
+  }, [isMobile]);
+
+  const center: LatLngExpression = useMemo(() => [39.5, -98.35], []);
 
   const counts = useMemo(() => {
     let fatal = 0,
@@ -118,7 +126,6 @@ export default function MapView() {
         search.trim()
       )}`;
       const res = await fetch(url, { cache: "no-store" });
-
       const json = await res.json().catch(() => null);
 
       if (!res.ok || !json?.ok) {
@@ -135,6 +142,9 @@ export default function MapView() {
         json?.matched ?? nextPoints.length
       }`;
       setStatus(`OK. Loaded ${nextPoints.length} points. (${dbg})`);
+
+      // On mobile, after a successful search/reload, close the panel so user sees map.
+      if (isMobile) setPanelOpen(false);
     } catch (e: any) {
       setPoints([]);
       setStatus(`Fetch failed (network/runtime). See console.`);
@@ -149,116 +159,182 @@ export default function MapView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const panelStyles: React.CSSProperties = isMobile
+    ? {
+        position: "absolute",
+        zIndex: 1200,
+        top: 12,
+        left: 12,
+        right: 12,
+        maxWidth: 520,
+        margin: "0 auto",
+        padding: 14,
+        borderRadius: 12,
+        background: "rgba(255,255,255,0.97)",
+        boxShadow: "0 10px 30px rgba(0,0,0,0.18)",
+        fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
+      }
+    : {
+        position: "absolute",
+        zIndex: 1000,
+        top: 12,
+        left: 12,
+        width: 320,
+        padding: 14,
+        borderRadius: 12,
+        background: "rgba(255,255,255,0.95)",
+        boxShadow: "0 10px 30px rgba(0,0,0,0.15)",
+        fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
+      };
+
   return (
-    <div style={{ height: "100vh", width: "100vw", position: "relative" }}>
+    <div
+      style={{
+        // ✅ iOS-friendly viewport height
+        height: "100dvh",
+        width: "100vw",
+        position: "relative",
+        overflow: "hidden",
+      }}
+    >
       <ClockWidget />
 
-      {/* Control panel */}
-      <div
-        style={{
-          position: "absolute",
-          zIndex: 1000,
-          top: 12,
-          left: 12,
-          width: 320,
-          padding: 14,
-          borderRadius: 12,
-          background: "rgba(255,255,255,0.95)",
-          boxShadow: "0 10px 30px rgba(0,0,0,0.15)",
-          fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
-        }}
-      >
-        <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 6 }}>Aviation Safety Watch</div>
-        <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 10 }}>Data source: NTSB JSON blocks · Default range: last 12 months</div>
+      {/* ✅ Mobile: small button to open/close panel */}
+      {isMobile && (
+        <div style={{ position: "absolute", zIndex: 1300, top: 12, left: 12, right: 12, pointerEvents: "none" }}>
+          <div style={{ display: "flex", justifyContent: "flex-start", gap: 8, pointerEvents: "auto" }}>
+            <button
+              onClick={() => setPanelOpen((v) => !v)}
+              style={{
+                padding: "10px 12px",
+                borderRadius: 12,
+                border: "1px solid #ddd",
+                background: "#fff",
+                fontWeight: 800,
+                boxShadow: "0 10px 30px rgba(0,0,0,0.10)",
+              }}
+            >
+              {panelOpen ? "Close" : "Filters"}
+            </button>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          <div>
-            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Start</div>
+            <div
+              style={{
+                padding: "10px 12px",
+                borderRadius: 12,
+                border: "1px solid #eee",
+                background: "rgba(255,255,255,0.85)",
+                fontWeight: 800,
+              }}
+            >
+              Events: {counts.total}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Control panel (desktop always visible; mobile toggled) */}
+      {(!isMobile || panelOpen) && (
+        <div style={panelStyles}>
+          <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 6 }}>Aviation Safety Watch</div>
+          <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 10 }}>
+            Data source: NTSB JSON blocks · Default range: last 12 months
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Start</div>
+              <input
+                type="date"
+                value={start}
+                onChange={(e) => setStart(e.target.value)}
+                style={{ width: "100%", padding: 8, borderRadius: 8, border: "1px solid #ddd" }}
+              />
+            </div>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>End</div>
+              <input
+                type="date"
+                value={end}
+                onChange={(e) => setEnd(e.target.value)}
+                style={{ width: "100%", padding: 8, borderRadius: 8, border: "1px solid #ddd" }}
+              />
+            </div>
+          </div>
+
+          <div style={{ marginTop: 10 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Search</div>
             <input
-              type="date"
-              value={start}
-              onChange={(e) => setStart(e.target.value)}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="e.g., SR22, Cirrus, N123AB, Southwest…"
               style={{ width: "100%", padding: 8, borderRadius: 8, border: "1px solid #ddd" }}
             />
           </div>
-          <div>
-            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>End</div>
-            <input
-              type="date"
-              value={end}
-              onChange={(e) => setEnd(e.target.value)}
-              style={{ width: "100%", padding: 8, borderRadius: 8, border: "1px solid #ddd" }}
-            />
+
+          <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10 }}>
+            <button
+              onClick={load}
+              disabled={loading}
+              style={{
+                padding: "8px 12px",
+                borderRadius: 10,
+                border: "1px solid #ddd",
+                background: loading ? "#f4f4f4" : "#fff",
+                cursor: loading ? "not-allowed" : "pointer",
+                fontWeight: 700,
+              }}
+            >
+              {loading ? "Loading…" : "Reload"}
+            </button>
+
+            {!isMobile && (
+              <div style={{ fontSize: 12, opacity: 0.85 }}>
+                Events: <b>{counts.total}</b>
+              </div>
+            )}
           </div>
-        </div>
 
-        {/* ✅ Search bar (same as before) */}
-        <div style={{ marginTop: 10 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Search</div>
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="e.g., SR22, Cirrus, N123AB, Southwest…"
-            style={{ width: "100%", padding: 8, borderRadius: 8, border: "1px solid #ddd" }}
-          />
-        </div>
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontWeight: 800, marginBottom: 6 }}>Legend</div>
 
-        <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10 }}>
-          <button
-            onClick={load}
-            disabled={loading}
-            style={{
-              padding: "8px 12px",
-              borderRadius: 10,
-              border: "1px solid #ddd",
-              background: loading ? "#f4f4f4" : "#fff",
-              cursor: loading ? "not-allowed" : "pointer",
-              fontWeight: 700,
-            }}
-          >
-            {loading ? "Loading…" : "Reload"}
-          </button>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+              <span style={{ width: 14, height: 14, borderRadius: 7, background: colorFor("fatal"), display: "inline-block" }} />
+              <div style={{ fontSize: 13 }}>
+                Fatal accidents (red): <b>{counts.fatal}</b>
+              </div>
+            </div>
 
-          <div style={{ fontSize: 12, opacity: 0.85 }}>
-            Events: <b>{counts.total}</b>
-          </div>
-        </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+              <span
+                style={{ width: 14, height: 14, borderRadius: 7, background: colorFor("accident"), display: "inline-block" }}
+              />
+              <div style={{ fontSize: 13 }}>
+                Accidents (orange): <b>{counts.accident}</b>
+              </div>
+            </div>
 
-        <div style={{ marginTop: 12 }}>
-          <div style={{ fontWeight: 800, marginBottom: 6 }}>Legend</div>
-
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-            <span style={{ width: 14, height: 14, borderRadius: 7, background: colorFor("fatal"), display: "inline-block" }} />
-            <div style={{ fontSize: 13 }}>
-              Fatal accidents (red): <b>{counts.fatal}</b>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span
+                style={{ width: 14, height: 14, borderRadius: 7, background: colorFor("incident"), display: "inline-block" }}
+              />
+              <div style={{ fontSize: 13 }}>
+                Incidents (yellow): <b>{counts.incident}</b>
+              </div>
             </div>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-            <span style={{ width: 14, height: 14, borderRadius: 7, background: colorFor("accident"), display: "inline-block" }} />
-            <div style={{ fontSize: 13 }}>
-              Accidents (orange): <b>{counts.accident}</b>
-            </div>
-          </div>
-
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ width: 14, height: 14, borderRadius: 7, background: colorFor("incident"), display: "inline-block" }} />
-            <div style={{ fontSize: 13 }}>
-              Incidents (yellow): <b>{counts.incident}</b>
-            </div>
+          <div style={{ marginTop: 10, fontSize: 12, lineHeight: 1.3 }}>
+            <b>Status:</b>{" "}
+            <span style={{ color: status.includes("not OK") || status.includes("failed") ? "#d32f2f" : "#222" }}>
+              {status}
+            </span>
           </div>
         </div>
-
-        <div style={{ marginTop: 10, fontSize: 12, lineHeight: 1.3 }}>
-          <b>Status:</b>{" "}
-          <span style={{ color: status.includes("not OK") || status.includes("failed") ? "#d32f2f" : "#222" }}>{status}</span>
-        </div>
-      </div>
+      )}
 
       {/* Map */}
       <MapContainer center={center} zoom={4} scrollWheelZoom style={{ height: "100%", width: "100%" }} zoomControl={false}>
         <ZoomControl position="bottomright" />
-
         <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
 
         {points.map((p) => (
@@ -273,8 +349,15 @@ export default function MapView() {
               fillOpacity: 0.9,
             }}
           >
-            {/* ✅ Do NOT auto-pan / zoom the map when opening */}
-            <Popup autoPan={false} keepInView={false} closeOnClick={false} autoClose={false} maxWidth={340}>
+            <Popup
+              autoPan={false}
+              keepInView={false}
+              closeOnClick={false}
+              autoClose={false}
+              // ✅ Mobile: keep popups reasonable
+              maxWidth={isMobile ? 260 : 340}
+              className="asw-popup"
+            >
               <div style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" }}>
                 <div style={{ fontWeight: 800, marginBottom: 6 }}>
                   {labelFor(p.kind)}
@@ -288,7 +371,7 @@ export default function MapView() {
                     </div>
                   ) : null}
 
-                  {(p.city || p.state || p.country) ? (
+                  {p.city || p.state || p.country ? (
                     <div>
                       <b>Location:</b> {[p.city, p.state, p.country].filter(Boolean).join(", ")}
                     </div>
@@ -307,9 +390,18 @@ export default function MapView() {
                   ) : null}
                 </div>
 
-                {/* ✅ show only a short “high-level” narrative */}
                 {p.summary ? (
-                  <div style={{ fontSize: 12, opacity: 0.92, marginBottom: 10, whiteSpace: "pre-wrap" }}>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      opacity: 0.92,
+                      marginBottom: 10,
+                      whiteSpace: "pre-wrap",
+                      // ✅ if a narrative is still long, don’t let it explode on mobile
+                      maxHeight: isMobile ? 120 : 160,
+                      overflow: "auto",
+                    }}
+                  >
                     {getShortNarrative(p.summary)}
                   </div>
                 ) : null}
@@ -326,6 +418,16 @@ export default function MapView() {
           </CircleMarker>
         ))}
       </MapContainer>
+
+      {/* ✅ Tiny CSS (inline) for popup scrolling usability */}
+      <style jsx global>{`
+        .leaflet-popup-content {
+          margin: 10px 12px;
+        }
+        .leaflet-popup-content-wrapper {
+          border-radius: 12px;
+        }
+      `}</style>
     </div>
   );
 }
