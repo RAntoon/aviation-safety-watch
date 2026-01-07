@@ -9,7 +9,7 @@ type AnyRow = Record<string, any>;
 type ManifestEntry = {
   from: string; // YYYY-MM-DD
   to: string;   // YYYY-MM-DD
-  file: string; // filename in /data
+  file: string; // filename in /data (must match exactly)
 };
 
 function parseDate(value: any): number | null {
@@ -41,6 +41,22 @@ function matchesQuery(q: string, haystackParts: any[]): boolean {
   return h.includes(q);
 }
 
+// ✅ Handles either:
+//  - top-level array: [ ... ]
+//  - wrapped object: { results: [ ... ] } or similar
+function findFirstArray(value: any): AnyRow[] {
+  if (Array.isArray(value)) return value as AnyRow[];
+
+  if (value && typeof value === "object") {
+    for (const k of Object.keys(value)) {
+      const v = (value as any)[k];
+      if (Array.isArray(v)) return v as AnyRow[];
+    }
+  }
+
+  return [];
+}
+
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const startStr = searchParams.get("start");
@@ -65,9 +81,10 @@ export async function GET(req: Request) {
   let manifest: ManifestEntry[] = [];
   try {
     manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    if (!Array.isArray(manifest)) throw new Error("manifest.json must be a JSON array");
   } catch (e: any) {
     return NextResponse.json(
-      { ok: false, error: `manifest.json invalid JSON: ${String(e?.message ?? e)}`, points: [] },
+      { ok: false, error: `manifest.json invalid: ${String(e?.message ?? e)}`, points: [] },
       { status: 500 }
     );
   }
@@ -78,12 +95,13 @@ export async function GET(req: Request) {
   let rowsMatchedQuery = 0;
 
   const points: any[] = [];
+  const blockErrors: any[] = [];
 
   for (const block of manifest) {
     const blockFrom = Date.parse(block.from);
     const blockTo = Date.parse(block.to);
 
-    // Skip blocks that can't possibly intersect the requested range
+    // skip blocks that cannot intersect date range
     if (
       Number.isFinite(startT) &&
       Number.isFinite(endInclusive) &&
@@ -93,19 +111,34 @@ export async function GET(req: Request) {
     }
 
     const filePath = path.join(dataDir, block.file);
-    if (!fs.existsSync(filePath)) continue;
+
+    if (!fs.existsSync(filePath)) {
+      blockErrors.push({ file: block.file, error: "file not found", filePath });
+      continue;
+    }
 
     let parsed: any;
     try {
       parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
     } catch (e: any) {
-      return NextResponse.json(
-        { ok: false, error: `Failed parsing ${block.file}: ${String(e?.message ?? e)}`, points: [] },
-        { status: 500 }
-      );
+      blockErrors.push({ file: block.file, error: `JSON parse failed: ${String(e?.message ?? e)}` });
+      continue; // ✅ do not crash whole request
     }
 
-    const rows: AnyRow[] = Array.isArray(parsed) ? parsed : [];
+    const rows: AnyRow[] = findFirstArray(parsed);
+    if (!rows.length) {
+      blockErrors.push({
+        file: block.file,
+        error: "No array found in JSON (expected top-level array or an object containing an array)",
+        parsedType: Array.isArray(parsed) ? "array" : typeof parsed,
+        topLevelKeys:
+          parsed && typeof parsed === "object" && !Array.isArray(parsed)
+            ? Object.keys(parsed).slice(0, 30)
+            : [],
+      });
+      continue;
+    }
+
     totalRows += rows.length;
 
     for (const row of rows) {
@@ -131,10 +164,6 @@ export async function GET(req: Request) {
 
       const vehicle0 = Array.isArray(row?.cm_vehicles) ? row.cm_vehicles[0] : undefined;
 
-      const tailNumber = vehicle0?.registrationNumber
-        ? String(vehicle0.registrationNumber).trim()
-        : undefined;
-
       const aircraftType =
         vehicle0?.model
           ? String(vehicle0.model).trim()
@@ -144,7 +173,13 @@ export async function GET(req: Request) {
           ? String(vehicle0.make).trim()
           : undefined;
 
-      const operatorName = vehicle0?.operatorName ? String(vehicle0.operatorName).trim() : undefined;
+      const tailNumber = vehicle0?.registrationNumber
+        ? String(vehicle0.registrationNumber).trim()
+        : undefined;
+
+      const operatorName = vehicle0?.operatorName
+        ? String(vehicle0.operatorName).trim()
+        : undefined;
 
       const narrative =
         row?.prelimNarrative ??
@@ -153,7 +188,6 @@ export async function GET(req: Request) {
         row?.narrative ??
         undefined;
 
-      // ✅ Single-query search (if q provided)
       const okQuery = matchesQuery(q, [
         ntsbNum,
         aircraftType,
@@ -198,11 +232,12 @@ export async function GET(req: Request) {
 
   return NextResponse.json({
     ok: true,
+    query: qRaw,
     totalRows,
     rowsInRange,
     rowsWithCoords,
     rowsMatchedQuery,
-    query: qRaw,
     points,
+    blockErrors, // ✅ this will tell you exactly what's wrong
   });
 }
