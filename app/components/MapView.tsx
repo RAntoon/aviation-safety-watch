@@ -7,7 +7,6 @@ import * as RL from "react-leaflet";
 import ClockWidget from "./ClockWidget";
 
 // ✅ Hard-stop the annoying TS mismatch in some Vercel builds.
-// Runtime behavior is correct; this only sidesteps broken typings.
 const MapContainer = RL.MapContainer as unknown as React.FC<any>;
 const TileLayer = RL.TileLayer as unknown as React.FC<any>;
 const CircleMarker = RL.CircleMarker as unknown as React.FC<any>;
@@ -22,19 +21,20 @@ type MapPoint = {
   lng: number;
   kind: PointKind;
 
-  // display fields (safe optional)
   date?: string;
   city?: string;
   state?: string;
   country?: string;
 
-  // NTSB / docket link
-  docketUrl?: string;
   ntsbCaseId?: string;
-  summary?: string;
+  docketUrl?: string;
 
-  // ✅ NEW: aircraft type/model (SR22, B737, etc.)
   aircraftType?: string;
+  tailNumber?: string;
+  operatorName?: string;
+
+  summary?: string;
+  narrative?: string;
 };
 
 function isoDate(d: Date) {
@@ -52,9 +52,15 @@ function last12MonthsRange() {
 }
 
 function colorFor(kind: PointKind) {
-  if (kind === "fatal") return "#d32f2f"; // red
-  if (kind === "accident") return "#fb8c00"; // orange
-  return "#fdd835"; // yellow
+  if (kind === "fatal") return "#d32f2f";
+  if (kind === "accident") return "#fb8c00";
+  return "#fdd835";
+}
+
+function labelFor(kind: PointKind) {
+  if (kind === "fatal") return "Fatal Accident";
+  if (kind === "accident") return "Accident";
+  return "Incident";
 }
 
 export default function MapView() {
@@ -62,11 +68,12 @@ export default function MapView() {
   const [start, setStart] = useState<string>(isoDate(defaultRange.start));
   const [end, setEnd] = useState<string>(isoDate(defaultRange.end));
 
+  const [q, setQ] = useState<string>(""); // ✅ search bar
   const [points, setPoints] = useState<MapPoint[]>([]);
   const [status, setStatus] = useState<string>("Idle");
   const [loading, setLoading] = useState<boolean>(false);
 
-  const center: LatLngExpression = useMemo(() => [39.5, -98.35], []); // continental US
+  const center: LatLngExpression = useMemo(() => [39.5, -98.35], []);
 
   const counts = useMemo(() => {
     let fatal = 0,
@@ -84,12 +91,13 @@ export default function MapView() {
     setLoading(true);
     setStatus("Loading…");
     try {
-      const url = `/api/accidents?start=${encodeURIComponent(
-        start
-      )}&end=${encodeURIComponent(end)}`;
-      const res = await fetch(url, { cache: "no-store" });
+      const url =
+        `/api/accidents?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}` +
+        (q.trim() ? `&q=${encodeURIComponent(q.trim())}` : "");
 
+      const res = await fetch(url, { cache: "no-store" });
       const text = await res.text();
+
       let json: any = null;
       try {
         json = JSON.parse(text);
@@ -98,19 +106,16 @@ export default function MapView() {
       }
 
       if (!res.ok) {
-        const upstream = json?.error || json?.message || text?.slice(0, 300);
         setPoints([]);
-        setStatus(
-          `Accidents fetch not OK (${res.status}). Check /api/accidents output & Vercel logs.`
-        );
-        console.error("API /api/accidents error:", { status: res.status, upstream });
+        setStatus(`Accidents fetch not OK (${res.status}). Check /api/accidents output & Vercel logs.`);
+        console.error("API /api/accidents error:", { status: res.status, body: text?.slice(0, 500) });
         return;
       }
 
       const nextPoints: MapPoint[] = Array.isArray(json?.points) ? json.points : [];
       setPoints(nextPoints);
 
-      const dbg = `rows=${json?.totalRows ?? "?"}, coords=${json?.rowsWithCoords ?? "?"}, inRange=${json?.rowsInRange ?? "?"}`;
+      const dbg = `rows=${json?.totalRows ?? "?"}, inRange=${json?.rowsInRange ?? "?"}, coords=${json?.rowsWithCoords ?? "?"}, matched=${json?.rowsMatchedQuery ?? "?"}`;
       setStatus(`OK. Loaded ${nextPoints.length} points. (${dbg})`);
     } catch (e: any) {
       setPoints([]);
@@ -121,7 +126,6 @@ export default function MapView() {
     }
   }
 
-  // Auto-load once on mount
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -129,17 +133,16 @@ export default function MapView() {
 
   return (
     <div style={{ height: "100vh", width: "100vw", position: "relative" }}>
-      {/* Clock in the upper-right */}
       <ClockWidget />
 
-      {/* ✅ RESTORED: Control panel / “search bar” (top-left) */}
+      {/* Control panel */}
       <div
         style={{
           position: "absolute",
           zIndex: 1000,
           top: 12,
           left: 12,
-          width: 320,
+          width: 340,
           padding: 14,
           borderRadius: 12,
           background: "rgba(255,255,255,0.95)",
@@ -147,14 +150,12 @@ export default function MapView() {
           fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
         }}
       >
-        <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 6 }}>
-          Aviation Safety Watch
-        </div>
-
+        <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 6 }}>Aviation Safety Watch</div>
         <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 10 }}>
           Data source: NTSB JSON blocks · Default range: last 12 months
         </div>
 
+        {/* Dates */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
           <div>
             <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Start</div>
@@ -165,7 +166,6 @@ export default function MapView() {
               style={{ width: "100%", padding: 8, borderRadius: 8, border: "1px solid #ddd" }}
             />
           </div>
-
           <div>
             <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>End</div>
             <input
@@ -175,6 +175,20 @@ export default function MapView() {
               style={{ width: "100%", padding: 8, borderRadius: 8, border: "1px solid #ddd" }}
             />
           </div>
+        </div>
+
+        {/* ✅ Search bar (small) */}
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Search</div>
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="e.g., SR22, Cirrus, N123AB, Southwest…"
+            style={{ width: "100%", padding: 8, borderRadius: 8, border: "1px solid #ddd" }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") load();
+            }}
+          />
         </div>
 
         <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10 }}>
@@ -202,45 +216,21 @@ export default function MapView() {
           <div style={{ fontWeight: 800, marginBottom: 6 }}>Legend</div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-            <span
-              style={{
-                width: 14,
-                height: 14,
-                borderRadius: 7,
-                background: colorFor("fatal"),
-                display: "inline-block",
-              }}
-            />
+            <span style={{ width: 14, height: 14, borderRadius: 7, background: colorFor("fatal"), display: "inline-block" }} />
             <div style={{ fontSize: 13 }}>
               Fatal accidents (red): <b>{counts.fatal}</b>
             </div>
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-            <span
-              style={{
-                width: 14,
-                height: 14,
-                borderRadius: 7,
-                background: colorFor("accident"),
-                display: "inline-block",
-              }}
-            />
+            <span style={{ width: 14, height: 14, borderRadius: 7, background: colorFor("accident"), display: "inline-block" }} />
             <div style={{ fontSize: 13 }}>
               Accidents (orange): <b>{counts.accident}</b>
             </div>
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span
-              style={{
-                width: 14,
-                height: 14,
-                borderRadius: 7,
-                background: colorFor("incident"),
-                display: "inline-block",
-              }}
-            />
+            <span style={{ width: 14, height: 14, borderRadius: 7, background: colorFor("incident"), display: "inline-block" }} />
             <div style={{ fontSize: 13 }}>
               Incidents (yellow): <b>{counts.incident}</b>
             </div>
@@ -249,31 +239,16 @@ export default function MapView() {
 
         <div style={{ marginTop: 10, fontSize: 12, lineHeight: 1.3 }}>
           <b>Status:</b>{" "}
-          <span
-            style={{
-              color: status.includes("not OK") || status.includes("failed") ? "#d32f2f" : "#222",
-            }}
-          >
+          <span style={{ color: status.includes("not OK") || status.includes("failed") ? "#d32f2f" : "#222" }}>
             {status}
           </span>
         </div>
       </div>
 
       {/* Map */}
-      <MapContainer
-        center={center}
-        zoom={4}
-        scrollWheelZoom
-        style={{ height: "100%", width: "100%" }}
-        zoomControl={false}
-      >
-        {/* Zoom buttons bottom-right */}
+      <MapContainer center={center} zoom={4} scrollWheelZoom style={{ height: "100%", width: "100%" }} zoomControl={false}>
         <ZoomControl position="bottomright" />
-
-        <TileLayer
-          attribution="&copy; OpenStreetMap contributors"
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        />
+        <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
 
         {points.map((p) => (
           <CircleMarker
@@ -288,16 +263,13 @@ export default function MapView() {
             }}
           >
             <Popup>
-              <div style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" }}>
-                <div style={{ fontWeight: 800, marginBottom: 6 }}>
-                  {(p.kind === "fatal"
-                    ? "Fatal Accident"
-                    : p.kind === "accident"
-                    ? "Accident"
-                    : "Incident") + (p.aircraftType ? ` - ${p.aircraftType}` : "")}
+              <div style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif", maxWidth: 360 }}>
+                <div style={{ fontWeight: 900, fontSize: 20, marginBottom: 10 }}>
+                  {labelFor(p.kind)}
+                  {p.aircraftType ? ` - ${p.aircraftType}` : ""}
                 </div>
 
-                <div style={{ fontSize: 13, marginBottom: 6 }}>
+                <div style={{ fontSize: 18, lineHeight: 1.25, marginBottom: 10 }}>
                   {p.date ? (
                     <div>
                       <b>Date:</b> {p.date}
@@ -315,18 +287,32 @@ export default function MapView() {
                       <b>NTSB Case:</b> {p.ntsbCaseId}
                     </div>
                   ) : null}
+
+                  {p.tailNumber ? (
+                    <div>
+                      <b>Tail #:</b> {p.tailNumber}
+                    </div>
+                  ) : null}
+
+                  {p.operatorName ? (
+                    <div>
+                      <b>Operator:</b> {p.operatorName}
+                    </div>
+                  ) : null}
                 </div>
 
-                {p.summary ? (
-                  <div style={{ fontSize: 12, opacity: 0.9, marginBottom: 8 }}>{p.summary}</div>
+                {p.narrative || p.summary ? (
+                  <div style={{ fontSize: 16, opacity: 0.95, marginBottom: 14, whiteSpace: "pre-wrap" }}>
+                    {p.narrative ?? p.summary}
+                  </div>
                 ) : null}
 
                 {p.docketUrl ? (
-                  <a href={p.docketUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>
+                  <a href={p.docketUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 900, fontSize: 26, color: "#1e73be" }}>
                     Open NTSB docket →
                   </a>
                 ) : (
-                  <div style={{ fontSize: 12, opacity: 0.75 }}>(No docket link provided)</div>
+                  <div style={{ fontSize: 13, opacity: 0.75 }}>(No docket link available)</div>
                 )}
               </div>
             </Popup>
