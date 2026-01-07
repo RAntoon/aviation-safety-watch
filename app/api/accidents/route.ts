@@ -87,7 +87,7 @@ export async function GET(req: Request) {
   const endT = Date.parse(endStr);
   const endInclusive = Number.isFinite(endT) ? endT + 24 * 60 * 60 * 1000 - 1 : NaN;
 
-  const dataPath = path.join(process.cwd(), "data", "accidents.json");
+  const manifestPath = path.join(process.cwd(), "data", "manifest.json");
   const exists = fs.existsSync(dataPath);
 
   try {
