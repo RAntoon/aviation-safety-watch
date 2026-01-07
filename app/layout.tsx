@@ -2,8 +2,21 @@ import "leaflet/dist/leaflet.css";
 import Script from "next/script";
 
 export const metadata = {
-  title: "Aviation Safety Watch",
-  description: "Global aviation accident and incident visualization using NTSB data",
+  title: "Aviation Safety Watch | Global Aircraft Accidents & Incidents Map",
+  description:
+    "Interactive map of aviation accidents and incidents worldwide. Filter by date range, aircraft type, operator, and severity using official investigation records.",
+  openGraph: {
+    title: "Aviation Safety Watch",
+    description:
+      "Explore aviation accidents and incidents worldwide using an interactive, filterable map.",
+    url: "https://aviationsafetywatch.com",
+    siteName: "Aviation Safety Watch",
+    type: "website",
+  },
+  robots: {
+    index: true,
+    follow: true,
+  },
 };
 
 export default function RootLayout({
@@ -31,9 +44,7 @@ export default function RootLayout({
         </Script>
       </head>
 
-      <body style={{ margin: 0, padding: 0 }}>
-        {children}
-      </body>
+      <body style={{ margin: 0, padding: 0 }}>{children}</body>
     </html>
   );
 }
