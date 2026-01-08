@@ -1,10 +1,4 @@
 [
-  { "from": "2003-01-01", "to": "2003-12-31", "file": "accidents_2003.json" },
-  { "from": "2004-01-01", "to": "2004-12-31", "file": "accidents_2004.json" },
-  { "from": "2005-01-01", "to": "2005-12-31", "file": "accidents_2005.json" },
-  { "from": "2006-01-01", "to": "2006-12-31", "file": "accidents_2006.json" },
-  { "from": "2007-01-01", "to": "2007-12-31", "file": "accidents_2007.json" },
-  { "from": "2008-01-01", "to": "2008-12-31", "file": "accidents_2008.json" },
   { "from": "2009-01-01", "to": "2009-12-31", "file": "accidents_2009.json" },
   { "from": "2010-01-01", "to": "2010-12-31", "file": "accidents_2010.json" },
   { "from": "2011-01-01", "to": "2011-12-31", "file": "accidents_2011.json" },
@@ -16,9 +10,11 @@
   { "from": "2017-01-01", "to": "2017-12-31", "file": "accidents_2017.json" },
   { "from": "2018-01-01", "to": "2018-12-31", "file": "accidents_2018.json" },
   { "from": "2019-01-01", "to": "2019-12-31", "file": "accidents_2019.json" },
-
-  { "from": "2020-01-01", "to": "2021-12-31", "file": "accidents_2020_2021.json" },
-  { "from": "2022-01-01", "to": "2023-12-31", "file": "accidents_2022_2023.json" },
-  { "from": "2024-01-01", "to": "2025-12-31", "file": "accidents_2024_2025.json" },
+  { "from": "2020-01-01", "to": "2020-12-31", "file": "accidents_2020.json" },
+  { "from": "2021-01-01", "to": "2021-12-31", "file": "accidents_2021.json" },
+  { "from": "2022-01-01", "to": "2022-12-31", "file": "accidents_2022.json" },
+  { "from": "2023-01-01", "to": "2023-12-31", "file": "accidents_2023.json" },
+  { "from": "2024-01-01", "to": "2024-12-31", "file": "accidents_2024.json" },
+  { "from": "2025-01-01", "to": "2025-12-31", "file": "accidents_2025.json" },
   { "from": "2026-01-01", "to": "2026-12-31", "file": "accidents_2026.json" }
 ]
