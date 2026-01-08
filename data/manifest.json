@@ -1,32 +1,42 @@
 [
   {
-    "file": "accidents_2018.json",
+    "from": "2016-01-01",
+    "to": "2016-12-31",
+    "file": "accidents_2016.json"
+  },
+  {
+    "from": "2017-01-01",
+    "to": "2017-12-31",
+    "file": "accidents_2017.json"
+  },
+  {
     "from": "2018-01-01",
-    "to": "2018-12-31"
+    "to": "2018-12-31",
+    "file": "accidents_2018.json"
   },
   {
-    "file": "accidents_2019.json",
     "from": "2019-01-01",
-    "to": "2019-12-31"
+    "to": "2019-12-31",
+    "file": "accidents_2019.json"
   },
   {
-    "file": "accidents_2020_2021.json",
     "from": "2020-01-01",
-    "to": "2021-12-31"
+    "to": "2021-12-31",
+    "file": "accidents_2020_2021.json"
   },
   {
-    "file": "accidents_2022_2023.json",
     "from": "2022-01-01",
-    "to": "2023-12-31"
+    "to": "2023-12-31",
+    "file": "accidents_2022_2023.json"
   },
   {
-    "file": "accidents_2024_2025.json",
     "from": "2024-01-01",
-    "to": "2025-12-31"
+    "to": "2025-12-31",
+    "file": "accidents_2024_2025.json"
   },
   {
-    "file": "accidents_2026.json",
     "from": "2026-01-01",
-    "to": "2026-12-31"
+    "to": "2026-12-31",
+    "file": "accidents_2026.json"
   }
 ]
