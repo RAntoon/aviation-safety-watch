@@ -6,11 +6,11 @@ export const runtime = "nodejs";
 
 type AnyRow = Record<string, any>;
 
-type BlobEntry = {
-  from: string;     // YYYY-MM-DD
-  to: string;       // YYYY-MM-DD
-  blobUrl: string;  // public blob url
-  label?: string;
+type ManifestEntry = {
+  from: string; // YYYY-MM-DD
+  to: string;   // YYYY-MM-DD
+  file: string; // filename label (for debug)
+  url: string;  // FULL https://.... blob URL
 };
 
 function parseDate(value: any): number | null {
@@ -25,170 +25,196 @@ function kindFor(row: AnyRow): "fatal" | "accident" | "incident" {
     Number(row?.cm_injury_onboard_Fatal ?? 0) ||
     Number(row?.cm_injury_onground_Fatal ?? 0);
 
-  if (fatalCount > 0 || String(row?.cm_highestInjury || "").toLowerCase() === "fatal") return "fatal";
+  if (fatalCount > 0 || String(row?.cm_highestInjury || "").toLowerCase() === "fatal")
+    return "fatal";
+
   if (String(row?.cm_eventType || "").toUpperCase() === "ACC") return "accident";
   return "incident";
+}
+
+function normalize(s: any) {
+  return String(s ?? "").toLowerCase().trim();
 }
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const startStr = searchParams.get("start");
   const endStr = searchParams.get("end");
+  const q = searchParams.get("q") || "";
 
   const startT = startStr ? Date.parse(startStr) : NaN;
   const endT = endStr ? Date.parse(endStr) : NaN;
   const endInclusive = Number.isFinite(endT) ? endT + 24 * 60 * 60 * 1000 - 1 : NaN;
 
   const dataDir = path.join(process.cwd(), "data");
-  const blobManifestPath = path.join(dataDir, "blob-manifest.json");
+  const manifestPath = path.join(dataDir, "manifest.json");
 
-  if (!fs.existsSync(blobManifestPath)) {
+  if (!fs.existsSync(manifestPath)) {
     return NextResponse.json(
-      { ok: false, error: "data/blob-manifest.json not found", points: [] },
+      { ok: false, error: "manifest.json not found (data/manifest.json)", points: [] },
       { status: 500 }
     );
   }
 
-  let manifest: BlobEntry[] = [];
+  let manifestRaw: any;
   try {
-    manifest = JSON.parse(fs.readFileSync(blobManifestPath, "utf8"));
+    manifestRaw = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
   } catch (e: any) {
     return NextResponse.json(
-      { ok: false, error: "blob-manifest.json is not valid JSON", detail: String(e?.message ?? e), points: [] },
+      { ok: false, error: `manifest.json invalid JSON: ${String(e?.message ?? e)}`, points: [] },
       { status: 500 }
     );
   }
 
-  if (!Array.isArray(manifest)) {
+  if (!Array.isArray(manifestRaw)) {
     return NextResponse.json(
-      { ok: false, error: "blob-manifest.json must be a top-level array []", points: [] },
+      { ok: false, error: "manifest.json invalid: manifest.json must be a JSON array", points: [] },
       { status: 500 }
     );
   }
 
-  // figure out which blob files overlap the requested date range
-  const blocksToLoad = manifest.filter((b) => {
-    const bFrom = Date.parse(b.from);
-    const bTo = Date.parse(b.to);
-    if (!Number.isFinite(startT) || !Number.isFinite(endInclusive)) return true; // if no params, load all (but UI always sends)
-    return !(endInclusive < bFrom || startT > bTo);
-  });
+  const manifest: ManifestEntry[] = manifestRaw;
 
+  const blocksLoaded: string[] = [];
   let totalRows = 0;
   let rowsWithCoords = 0;
   let rowsInRange = 0;
+  let matched = 0;
 
   const points: any[] = [];
-  const debug: any = {
-    manifestEntries: manifest.length,
-    blocksLoaded: blocksToLoad.map((b) => ({ from: b.from, to: b.to, label: b.label, blobUrl: b.blobUrl })),
-  };
+  const nq = normalize(q);
 
-  try {
-    for (const block of blocksToLoad) {
-      if (!block?.blobUrl) continue;
+  // Load only blocks that overlap the date range
+  for (const block of manifest) {
+    const blockFrom = Date.parse(block.from);
+    const blockTo = Date.parse(block.to);
 
-      const res = await fetch(block.blobUrl, { cache: "no-store" });
+    if (
+      Number.isFinite(startT) &&
+      Number.isFinite(endInclusive) &&
+      (endInclusive < blockFrom || startT > blockTo)
+    ) {
+      continue;
+    }
+
+    if (!block?.url) continue;
+
+    // Fetch JSON from Blob URL
+    let rows: AnyRow[] = [];
+    try {
+      const res = await fetch(block.url, { cache: "no-store" });
       if (!res.ok) {
-        return NextResponse.json(
-          {
-            ok: false,
-            error: `Failed to fetch blob: ${res.status} ${res.statusText}`,
-            blobUrl: block.blobUrl,
-            debug,
-            points: [],
-          },
-          { status: 500 }
-        );
+        // Skip but record for debug
+        blocksLoaded.push(`${block.file} (FETCH ${res.status})`);
+        continue;
       }
 
       const parsed = await res.json();
-      const rows: AnyRow[] = Array.isArray(parsed) ? parsed : [];
-
+      rows = Array.isArray(parsed) ? parsed : [];
+      blocksLoaded.push(`${block.file} (${rows.length})`);
       totalRows += rows.length;
-
-      for (const row of rows) {
-        const eventT = parseDate(row?.cm_eventDate);
-        const inRange =
-          eventT !== null &&
-          Number.isFinite(startT) &&
-          Number.isFinite(endInclusive) &&
-          eventT >= startT &&
-          eventT <= endInclusive;
-
-        if (inRange) rowsInRange++;
-        if (!inRange) continue;
-
-        const lat = Number(row?.cm_Latitude);
-        const lng = Number(row?.cm_Longitude);
-        const hasCoords = Number.isFinite(lat) && Number.isFinite(lng);
-        if (hasCoords) rowsWithCoords++;
-        if (!hasCoords) continue;
-
-        const ntsbNum = row?.cm_ntsbNum ? String(row.cm_ntsbNum) : undefined;
-
-        // aircraft type: prefer model, else make+model
-        const vehicle0 = Array.isArray(row?.cm_vehicles) ? row.cm_vehicles[0] : undefined;
-        const aircraftType =
-          vehicle0?.model
-            ? String(vehicle0.model).trim()
-            : vehicle0?.make && vehicle0?.model
-            ? `${vehicle0.make} ${vehicle0.model}`
-            : undefined;
-
-        // narrative: keep short preview only (prevents huge popup)
-        const narrative =
-          row?.prelimNarrative ??
-          row?.factualNarrative ??
-          row?.analysisNarrative ??
-          undefined;
-
-        const preview = narrative ? String(narrative).replace(/\s+/g, " ").trim().slice(0, 260) : undefined;
-
-        points.push({
-          id: String(row?.cm_mkey ?? ntsbNum ?? `${lat},${lng}`),
-          lat,
-          lng,
-          kind: kindFor(row),
-
-          date: row?.cm_eventDate ? String(row.cm_eventDate).slice(0, 10) : undefined,
-          city: row?.cm_city ?? undefined,
-          state: row?.cm_state ?? undefined,
-          country: row?.cm_country ?? undefined,
-
-          ntsbCaseId: ntsbNum,
-
-          // NTSB docket links have been flaky; keep the case number and also provide a safer search link
-          docketUrl: ntsbNum
-            ? `https://data.ntsb.gov/carol-main-public/query-builder?queryId=2&results-page=1&sort-field=cm_eventDate&sort-direction=desc&filters=%5B%7B%22field%22%3A%22cm_ntsbNum%22%2C%22operator%22%3A%22%3D%22%2C%22value%22%3A%22${encodeURIComponent(ntsbNum)}%22%7D%5D`
-            : undefined,
-
-          aircraftType,
-          summary: preview,
-        });
-      }
+    } catch (e: any) {
+      blocksLoaded.push(`${block.file} (PARSE ERROR)`);
+      continue;
     }
 
-    return NextResponse.json({
-      ok: true,
-      debug,
-      totalRows,
-      rowsWithCoords,
-      rowsInRange,
-      points,
-    });
-  } catch (err: any) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: String(err?.message ?? err),
-        debug,
-        totalRows,
-        rowsWithCoords,
-        rowsInRange,
-        points: [],
-      },
-      { status: 500 }
-    );
+    for (const row of rows) {
+      const eventT = parseDate(row?.cm_eventDate);
+      const inRange =
+        eventT !== null &&
+        Number.isFinite(startT) &&
+        Number.isFinite(endInclusive) &&
+        eventT >= startT &&
+        eventT <= endInclusive;
+
+      if (inRange) rowsInRange++;
+      if (!inRange) continue;
+
+      // coords
+      const lat = Number(row?.cm_Latitude);
+      const lng = Number(row?.cm_Longitude);
+      const hasCoords = Number.isFinite(lat) && Number.isFinite(lng);
+      if (hasCoords) rowsWithCoords++;
+      if (!hasCoords) continue;
+
+      // fields for searching
+      const ntsbNum = row?.cm_ntsbNum ? String(row.cm_ntsbNum) : "";
+      const city = row?.cm_city ? String(row.cm_city) : "";
+      const state = row?.cm_state ? String(row.cm_state) : "";
+      const country = row?.cm_country ? String(row.cm_country) : "";
+
+      const vehicle0 = Array.isArray(row?.cm_vehicles) ? row.cm_vehicles[0] : undefined;
+      const make = vehicle0?.make ? String(vehicle0.make) : "";
+      const model = vehicle0?.model ? String(vehicle0.model) : "";
+      const reg = vehicle0?.registrationNumber ? String(vehicle0.registrationNumber) : "";
+      const operator = vehicle0?.operatorName ? String(vehicle0.operatorName) : "";
+
+      const narrative =
+        row?.prelimNarrative ??
+        row?.factualNarrative ??
+        row?.analysisNarrative ??
+        undefined;
+
+      // simple single-box search (aircraft/type/tail/operator/ntsb/city/state/country/narrative)
+      if (nq) {
+        const hay = normalize(
+          [
+            ntsbNum,
+            city,
+            state,
+            country,
+            make,
+            model,
+            reg,
+            operator,
+            narrative ? String(narrative) : "",
+          ].join(" ")
+        );
+        if (!hay.includes(nq)) continue;
+      }
+
+      matched++;
+
+      const aircraftType = model ? model.trim() : (make && model ? `${make} ${model}` : undefined);
+
+      // short summary only (high level)
+      const summary = narrative ? String(narrative).slice(0, 320) : undefined;
+
+      points.push({
+        id: String(row?.cm_mkey ?? ntsbNum ?? `${lat},${lng}`),
+        lat,
+        lng,
+        kind: kindFor(row),
+
+        date: row?.cm_eventDate ? String(row.cm_eventDate).slice(0, 10) : undefined,
+        city: city || undefined,
+        state: state || undefined,
+        country: country || undefined,
+
+        ntsbCaseId: ntsbNum || undefined,
+        docketUrl: ntsbNum
+          ? `https://data.ntsb.gov/Docket/?NTSBNumber=${encodeURIComponent(ntsbNum)}`
+          : undefined,
+
+        aircraftType,
+        tailNumber: reg || undefined,
+        operatorName: operator || undefined,
+
+        summary,
+      });
+    }
   }
+
+  return NextResponse.json({
+    ok: true,
+    debug: {
+      manifestEntries: manifest.length,
+      blocksLoaded,
+    },
+    totalRows,
+    rowsWithCoords,
+    rowsInRange,
+    matched,
+    points,
+  });
 }
