@@ -26,11 +26,16 @@ type MapPoint = {
   state?: string;
   country?: string;
 
+  // Existing
   docketUrl?: string;
   ntsbCaseId?: string;
 
   summary?: string;
   aircraftType?: string;
+
+  // ✅ NEW: tail number + optional direct report link (if your API provides it)
+  tailNumber?: string;
+  reportUrl?: string;
 };
 
 function isoDate(d: Date) {
@@ -331,19 +336,35 @@ export default function MapView() {
         />
 
         {points.map((p) => {
-          const titleRight = p.aircraftType ? ` - ${p.aircraftType}` : "";
+          // ✅ Tail number in front of aircraft type (popup title)
+          const aircraftLabel = p.aircraftType
+            ? p.tailNumber
+              ? `${p.tailNumber} - ${p.aircraftType}`
+              : p.aircraftType
+            : p.tailNumber
+            ? p.tailNumber
+            : "";
 
-          // Primary docket link (sometimes dockets aren’t published yet)
+          const titleRight = aircraftLabel ? ` - ${aircraftLabel}` : "";
+
+          // ✅ Docket link (always show if we can compute it)
           const docketUrl =
-            p.ntsbCaseId
+            p.docketUrl ||
+            (p.ntsbCaseId
               ? `https://data.ntsb.gov/Docket/?NTSBNumber=${encodeURIComponent(String(p.ntsbCaseId).trim())}`
-              : undefined;
+              : undefined);
 
-          // Fallback: search page (always works as a fallback)
-          const searchUrl =
-            p.ntsbCaseId
-              ? `https://data.ntsb.gov/Docket/forms/Searchdocket?NTSBNumber=${encodeURIComponent(String(p.ntsbCaseId).trim())}`
-              : `https://data.ntsb.gov/Docket/forms/Searchdocket`;
+          // ✅ Report link:
+          // - If your API provides p.reportUrl, we use that (best)
+          // - Otherwise we fall back to CAROL basic-search for the NTSB number
+          //   (it will show whatever is released: prelim/final, etc.)
+          const reportUrl =
+            p.reportUrl ||
+            (p.ntsbCaseId
+              ? `https://data.ntsb.gov/carol-main-public/basic-search?query=${encodeURIComponent(
+                  String(p.ntsbCaseId).trim()
+                )}`
+              : `https://data.ntsb.gov/carol-main-public/basic-search`);
 
           return (
             <CircleMarker
@@ -392,16 +413,17 @@ export default function MapView() {
                     </div>
                   ) : null}
 
+                  {/* ✅ Links: Report + Docket */}
                   <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                    <a href={reportUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>
+                      Report →
+                    </a>
+
                     {docketUrl ? (
                       <a href={docketUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>
-                        Open docket →
+                        Docket →
                       </a>
                     ) : null}
-
-                    <a href={searchUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>
-                      Search docket →
-                    </a>
                   </div>
                 </div>
               </Popup>
