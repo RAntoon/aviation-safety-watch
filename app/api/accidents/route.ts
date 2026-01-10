@@ -5,7 +5,12 @@ import path from "path";
 export const runtime = "nodejs";
 
 type AnyRow = Record<string, any>;
-type ManifestEntry = { from: string; to: string; file: string };
+
+type BlobManifestEntry = {
+  from: string;
+  to: string;
+  url: string; // FULL blob URL
+};
 
 function parseDate(value: any): number | null {
   if (!value) return null;
@@ -19,55 +24,58 @@ function kindFor(row: AnyRow): "fatal" | "accident" | "incident" {
     Number(row?.cm_injury_onboard_Fatal ?? 0) ||
     Number(row?.cm_injury_onground_Fatal ?? 0);
 
-  if (fatalCount > 0 || String(row?.cm_highestInjury || "").toLowerCase() === "fatal") return "fatal";
+  if (fatalCount > 0 || String(row?.cm_highestInjury || "").toLowerCase() === "fatal")
+    return "fatal";
+
   if (String(row?.cm_eventType || "").toUpperCase() === "ACC") return "accident";
   return "incident";
 }
 
-function firstParagraph(text: string, maxChars = 320) {
-  const cleaned = String(text).replace(/\r/g, "");
-  const para = cleaned.split("\n\n")[0]?.trim() || cleaned.trim();
-  return para.length > maxChars ? para.slice(0, maxChars).trimEnd() + "…" : para;
+async function fetchJsonArray(url: string): Promise<AnyRow[]> {
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Fetch failed ${res.status} for ${url}`);
+  const text = await res.text();
+  // Some exports can start with BOM; strip it
+  const cleaned = text.replace(/^\uFEFF/, "");
+  const parsed = JSON.parse(cleaned);
+  if (!Array.isArray(parsed)) return [];
+  return parsed as AnyRow[];
 }
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const startStr = searchParams.get("start");
   const endStr = searchParams.get("end");
-  const q = (searchParams.get("q") || "").trim();
+  const q = (searchParams.get("q") || "").trim().toLowerCase();
 
   const startT = startStr ? Date.parse(startStr) : NaN;
   const endT = endStr ? Date.parse(endStr) : NaN;
   const endInclusive = Number.isFinite(endT) ? endT + 24 * 60 * 60 * 1000 - 1 : NaN;
 
   const dataDir = path.join(process.cwd(), "data");
-  const manifestPath = path.join(dataDir, "manifest.json");
+  const manifestPath = path.join(dataDir, "blob-manifest.json");
 
   if (!fs.existsSync(manifestPath)) {
-    return NextResponse.json({ ok: false, error: "manifest.json not found", points: [] }, { status: 500 });
-  }
-
-  let manifest: ManifestEntry[] = [];
-  try {
-    const parsed = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-    if (!Array.isArray(parsed)) {
-      return NextResponse.json(
-        { ok: false, error: "manifest.json invalid: must be a JSON array", points: [] },
-        { status: 500 }
-      );
-    }
-    manifest = parsed as ManifestEntry[];
-  } catch (e: any) {
     return NextResponse.json(
-      { ok: false, error: `manifest.json parse error: ${String(e?.message ?? e)}`, points: [] },
+      { ok: false, error: "blob-manifest.json not found", points: [] },
       { status: 500 }
     );
   }
 
-  const base = (process.env.BLOB_PUBLIC_BASE_URL || "").replace(/\/+$/, "");
-  if (!base) {
+  let manifest: BlobManifestEntry[] = [];
+  try {
+    const raw = fs.readFileSync(manifestPath, "utf8");
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return NextResponse.json(
+        { ok: false, error: "blob-manifest.json invalid: must be a JSON array", points: [] },
+        { status: 500 }
+      );
+    }
+    manifest = parsed as BlobManifestEntry[];
+  } catch (e: any) {
     return NextResponse.json(
-      { ok: false, error: "Missing env var BLOB_PUBLIC_BASE_URL", points: [] },
+      { ok: false, error: `blob-manifest.json parse error: ${String(e?.message ?? e)}`, points: [] },
       { status: 500 }
     );
   }
@@ -77,41 +85,26 @@ export async function GET(req: Request) {
   let rowsInRange = 0;
   let matched = 0;
   const points: any[] = [];
+
   const blocksLoaded: string[] = [];
 
   for (const block of manifest) {
     const blockFrom = Date.parse(block.from);
     const blockTo = Date.parse(block.to);
 
-    if (Number.isFinite(startT) && Number.isFinite(endInclusive) && (endInclusive < blockFrom || startT > blockTo)) {
+    // Skip blocks that can't overlap the date range
+    if (
+      Number.isFinite(startT) &&
+      Number.isFinite(endInclusive) &&
+      (endInclusive < blockFrom || startT > blockTo)
+    ) {
       continue;
     }
 
-    const url = `${base}/${encodeURIComponent(block.file)}`;
-
-    let text = "";
     try {
-      const res = await fetch(url, { cache: "no-store" });
-      text = await res.text();
-
-      if (!res.ok) {
-        blocksLoaded.push(`${block.file} (HTTP ${res.status})`);
-        continue;
-      }
-
-      let rows: AnyRow[] = [];
-      try {
-        const parsed = JSON.parse(text);
-        rows = Array.isArray(parsed) ? parsed : [];
-      } catch {
-        // Show you the first chunk so you can see what the blob is returning (HTML? AccessDenied?)
-        const head = text.slice(0, 200).replace(/\s+/g, " ");
-        blocksLoaded.push(`${block.file} (PARSE ERROR: starts "${head}")`);
-        continue;
-      }
-
-      blocksLoaded.push(block.file);
+      const rows = await fetchJsonArray(block.url);
       totalRows += rows.length;
+      blocksLoaded.push(block.url);
 
       for (const row of rows) {
         const eventT = parseDate(row?.cm_eventDate);
@@ -122,45 +115,56 @@ export async function GET(req: Request) {
           eventT >= startT &&
           eventT <= endInclusive;
 
+        if (inRange) rowsInRange++;
         if (!inRange) continue;
-        rowsInRange++;
 
         const lat = Number(row?.cm_Latitude);
         const lng = Number(row?.cm_Longitude);
         const hasCoords = Number.isFinite(lat) && Number.isFinite(lng);
+        if (hasCoords) rowsWithCoords++;
         if (!hasCoords) continue;
-        rowsWithCoords++;
 
         const ntsbNum = row?.cm_ntsbNum ? String(row.cm_ntsbNum) : undefined;
 
         const vehicle0 = Array.isArray(row?.cm_vehicles) ? row.cm_vehicles[0] : undefined;
-        const aircraftType = vehicle0?.model ? String(vehicle0.model).trim() : undefined;
-        const tail = vehicle0?.registrationNumber ? String(vehicle0.registrationNumber).trim() : undefined;
-        const operator = row?.operatorName ? String(row.operatorName).trim() : undefined;
+
+        const aircraftType =
+          vehicle0?.model
+            ? String(vehicle0.model).trim()
+            : vehicle0?.make && vehicle0?.model
+            ? `${vehicle0.make} ${vehicle0.model}`
+            : undefined;
+
+        const tail =
+          vehicle0?.registrationNumber
+            ? String(vehicle0.registrationNumber).trim()
+            : row?.cm_registrationNumber
+            ? String(row.cm_registrationNumber).trim()
+            : undefined;
 
         const narrative =
           row?.prelimNarrative ??
           row?.factualNarrative ??
           row?.analysisNarrative ??
+          row?.narrative ??
           undefined;
 
-        // simple single search field
+        // Optional keyword filter (single search box)
         if (q) {
           const hay = [
             aircraftType,
             tail,
-            operator,
-            ntsbNum,
             row?.cm_city,
             row?.cm_state,
             row?.cm_country,
-            narrative ? firstParagraph(String(narrative), 800) : undefined
+            row?.cm_ntsbNum,
+            narrative,
           ]
             .filter(Boolean)
             .join(" ")
             .toLowerCase();
 
-          if (!hay.includes(q.toLowerCase())) continue;
+          if (!hay.includes(q)) continue;
         }
 
         matched++;
@@ -177,16 +181,20 @@ export async function GET(req: Request) {
           country: row?.cm_country ?? undefined,
 
           ntsbCaseId: ntsbNum,
-          docketUrl: ntsbNum ? `https://www.ntsb.gov/Pages/investigations.aspx?ntsbno=${encodeURIComponent(ntsbNum)}` : undefined,
+
+          // keep for now; we’ll fix docket behavior separately
+          docketUrl: ntsbNum
+            ? `https://data.ntsb.gov/Docket/?NTSBNumber=${encodeURIComponent(ntsbNum)}`
+            : undefined,
 
           aircraftType,
           tail,
-          operator,
-          summary: narrative ? firstParagraph(String(narrative), 360) : undefined
+          summary: narrative ? String(narrative).slice(0, 240) : undefined,
         });
       }
     } catch (e: any) {
-      blocksLoaded.push(`${block.file} (FETCH ERROR: ${String(e?.message ?? e)})`);
+      blocksLoaded.push(`${block.url} (PARSE/FETCH ERROR)`);
+      // keep going, so one bad file doesn't kill everything
       continue;
     }
   }
@@ -195,13 +203,12 @@ export async function GET(req: Request) {
     ok: true,
     debug: {
       manifestEntries: manifest.length,
-      base,
-      blocksLoaded
+      blocksLoaded,
     },
     totalRows,
     rowsWithCoords,
     rowsInRange,
     matched,
-    points
+    points,
   });
 }
