@@ -3,14 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import type { LatLngExpression } from "leaflet";
 import "leaflet/dist/leaflet.css";
-
-// ✅ Cluster CSS
-import "leaflet.markercluster/dist/MarkerCluster.css";
-import "leaflet.markercluster/dist/MarkerCluster.Default.css";
-
 import * as RL from "react-leaflet";
-import MarkerClusterGroup from "react-leaflet-cluster";
-
 import ClockWidget from "./ClockWidget";
 
 // ✅ Hard-stop the annoying TS mismatch in some Vercel builds.
@@ -36,10 +29,7 @@ type MapPoint = {
   docketUrl?: string;
   ntsbCaseId?: string;
 
-  // short/high-level text
   summary?: string;
-
-  // optional extra display field
   aircraftType?: string;
 };
 
@@ -63,16 +53,72 @@ function colorFor(kind: PointKind) {
   return "#fdd835"; // yellow
 }
 
-function shortText(s: string, max = 280) {
-  const cleaned = String(s || "")
+function shortNarrative(input?: string, maxChars = 300) {
+  if (!input) return "";
+  const cleaned = String(input)
     .replace(/&#x0D;|\\r\\n|\\n|\\r/g, "\n")
     .trim();
 
-  // take the first “paragraph-ish” chunk
-  const firstBlock = cleaned.split("\n").map(t => t.trim()).filter(Boolean)[0] || "";
-  if (!firstBlock) return "";
+  // Take first non-empty paragraph-ish line
+  const first = cleaned
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean)[0];
 
-  return firstBlock.length > max ? firstBlock.slice(0, max - 1) + "…" : firstBlock;
+  if (!first) return "";
+
+  return first.length > maxChars ? first.slice(0, maxChars - 1) + "…" : first;
+}
+
+/**
+ * Spread points that share identical coordinates into a small ring.
+ * No extra libs required. Makes overlapping dots clickable.
+ *
+ * radiusDeg: ~0.03 degrees ≈ 2 miles at equator (smaller at higher lat).
+ * We use a smaller default: 0.015 (~1 mile). Adjust if you want tighter.
+ */
+function spreadOverlaps(points: MapPoint[], radiusDeg = 0.015): MapPoint[] {
+  const groups = new Map<string, MapPoint[]>();
+
+  for (const p of points) {
+    // Key by rounded coords so tiny float diffs still group
+    const key = `${p.lat.toFixed(6)},${p.lng.toFixed(6)}`;
+    const arr = groups.get(key) ?? [];
+    arr.push(p);
+    groups.set(key, arr);
+  }
+
+  const out: MapPoint[] = [];
+
+  for (const arr of groups.values()) {
+    if (arr.length === 1) {
+      out.push(arr[0]);
+      continue;
+    }
+
+    // Spread around a circle centered at original point
+    const n = arr.length;
+    for (let i = 0; i < n; i++) {
+      const p = arr[i];
+      const angle = (2 * Math.PI * i) / n;
+
+      // Slightly increase radius with count so huge stacks spread more
+      const r = radiusDeg * (1 + Math.min(2, n / 25));
+
+      const lat2 = p.lat + r * Math.sin(angle);
+      const lng2 = p.lng + r * Math.cos(angle);
+
+      out.push({
+        ...p,
+        // keep id stable but unique in case duplicates exist
+        id: `${p.id}__s${i}`,
+        lat: lat2,
+        lng: lng2,
+      });
+    }
+  }
+
+  return out;
 }
 
 export default function MapView() {
@@ -121,11 +167,15 @@ export default function MapView() {
         return;
       }
 
-      const nextPoints: MapPoint[] = Array.isArray(json?.points) ? json.points : [];
-      setPoints(nextPoints);
+      const rawPoints: MapPoint[] = Array.isArray(json?.points) ? json.points : [];
+
+      // ✅ Spread overlaps (same airport / same coords)
+      const spread = spreadOverlaps(rawPoints);
+
+      setPoints(spread);
 
       const dbg = `rows=${json?.totalRows ?? "?"}, coords=${json?.rowsWithCoords ?? "?"}, inRange=${json?.rowsInRange ?? "?"}`;
-      setStatus(`OK. Loaded ${nextPoints.length} points. (${dbg})`);
+      setStatus(`OK. Loaded ${spread.length} points. (${dbg})`);
     } catch (e: any) {
       setPoints([]);
       setStatus(`Fetch failed (network/runtime). See console.`);
@@ -280,89 +330,84 @@ export default function MapView() {
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
-        {/* ✅ Cluster + spiderfy overlapping dots */}
-        <MarkerClusterGroup
-          chunkedLoading
-          showCoverageOnHover={false}
-          zoomToBoundsOnClick={false}
-          spiderfyOnMaxZoom={true}
-          maxClusterRadius={40}
-        >
-          {points.map((p) => {
-            const titleRight = p.aircraftType ? ` - ${p.aircraftType}` : "";
+        {points.map((p) => {
+          const titleRight = p.aircraftType ? ` - ${p.aircraftType}` : "";
 
-            // fallback “search docket” link (always usable)
-            const searchUrl = p.ntsbCaseId
+          // Primary docket link (sometimes dockets aren’t published yet)
+          const docketUrl =
+            p.ntsbCaseId
+              ? `https://data.ntsb.gov/Docket/?NTSBNumber=${encodeURIComponent(String(p.ntsbCaseId).trim())}`
+              : undefined;
+
+          // Fallback: search page (always works as a fallback)
+          const searchUrl =
+            p.ntsbCaseId
               ? `https://data.ntsb.gov/Docket/forms/Searchdocket?NTSBNumber=${encodeURIComponent(String(p.ntsbCaseId).trim())}`
-              : "https://data.ntsb.gov/Docket/forms/Searchdocket";
+              : `https://data.ntsb.gov/Docket/forms/Searchdocket`;
 
-            return (
-              <CircleMarker
-                key={p.id}
-                center={[p.lat, p.lng]}
-                radius={7}
-                pathOptions={{
-                  color: "#333",
-                  weight: 1,
-                  fillColor: colorFor(p.kind),
-                  fillOpacity: 0.9,
-                }}
-              >
-                <Popup autoPan={false}>
-                  <div style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" }}>
-                    <div style={{ fontWeight: 800, marginBottom: 6 }}>
-                      {p.kind === "fatal"
-                        ? `Fatal Accident${titleRight}`
-                        : p.kind === "accident"
-                        ? `Accident${titleRight}`
-                        : `Incident${titleRight}`}
-                    </div>
+          return (
+            <CircleMarker
+              key={p.id}
+              center={[p.lat, p.lng]}
+              radius={7}
+              pathOptions={{
+                color: "#333",
+                weight: 1,
+                fillColor: colorFor(p.kind),
+                fillOpacity: 0.9,
+              }}
+            >
+              {/* ✅ prevents map shifting/zooming when popup opens */}
+              <Popup autoPan={false} closeOnClick={false}>
+                <div style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" }}>
+                  <div style={{ fontWeight: 800, marginBottom: 6 }}>
+                    {p.kind === "fatal"
+                      ? `Fatal Accident${titleRight}`
+                      : p.kind === "accident"
+                      ? `Accident${titleRight}`
+                      : `Incident${titleRight}`}
+                  </div>
 
-                    <div style={{ fontSize: 13, marginBottom: 6 }}>
-                      {p.date ? (
-                        <div>
-                          <b>Date:</b> {p.date}
-                        </div>
-                      ) : null}
-                      {p.city || p.state || p.country ? (
-                        <div>
-                          <b>Location:</b> {[p.city, p.state, p.country].filter(Boolean).join(", ")}
-                        </div>
-                      ) : null}
-                      {p.ntsbCaseId ? (
-                        <div>
-                          <b>NTSB Case:</b> {p.ntsbCaseId}
-                        </div>
-                      ) : null}
-                    </div>
-
-                    {p.summary ? (
-                      <div style={{ fontSize: 12, opacity: 0.9, marginBottom: 8 }}>
-                        {shortText(p.summary, 320)}
+                  <div style={{ fontSize: 13, marginBottom: 6 }}>
+                    {p.date ? (
+                      <div>
+                        <b>Date:</b> {p.date}
                       </div>
                     ) : null}
-
-                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                      {p.docketUrl ? (
-                        <a href={p.docketUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>
-                          Open docket →
-                        </a>
-                      ) : null}
-
-                      <a href={searchUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>
-                        Search docket →
-                      </a>
-                    </div>
-
-                    <div style={{ fontSize: 11, opacity: 0.7, marginTop: 8 }}>
-                      Note: some dockets are not released yet and will show a “not released” message.  [oai_citation:1‡NTSB Data](https://data.ntsb.gov/Docket/?NTSBNumber=CEN25FA289)
-                    </div>
+                    {p.city || p.state || p.country ? (
+                      <div>
+                        <b>Location:</b> {[p.city, p.state, p.country].filter(Boolean).join(", ")}
+                      </div>
+                    ) : null}
+                    {p.ntsbCaseId ? (
+                      <div>
+                        <b>NTSB Case:</b> {p.ntsbCaseId}
+                      </div>
+                    ) : null}
                   </div>
-                </Popup>
-              </CircleMarker>
-            );
-          })}
-        </MarkerClusterGroup>
+
+                  {p.summary ? (
+                    <div style={{ fontSize: 12, opacity: 0.9, marginBottom: 8 }}>
+                      {shortNarrative(p.summary, 320)}
+                    </div>
+                  ) : null}
+
+                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                    {docketUrl ? (
+                      <a href={docketUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>
+                        Open docket →
+                      </a>
+                    ) : null}
+
+                    <a href={searchUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>
+                      Search docket →
+                    </a>
+                  </div>
+                </div>
+              </Popup>
+            </CircleMarker>
+          );
+        })}
       </MapContainer>
     </div>
   );
