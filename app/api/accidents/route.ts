@@ -34,7 +34,6 @@ function kindFor(row: AnyRow): "fatal" | "accident" | "incident" {
   if (fatalCount > 0 || String(row?.cm_highestInjury || "").toLowerCase() === "fatal") {
     return "fatal";
   }
-
   if (String(row?.cm_eventType || "").toUpperCase() === "ACC") return "accident";
   return "incident";
 }
@@ -49,34 +48,6 @@ function toNumberOrNaN(v: any): number {
   return Number.isFinite(n) ? n : NaN;
 }
 
-type GeoCacheValue =
-  | { lat: number; lng: number }
-  | { latitude: number; longitude: number }
-  | [number, number];
-
-function readGeoCache(dataDir: string): Record<string, GeoCacheValue> {
-  const cachePath = path.join(dataDir, "geocode-cache.json");
-  if (!fs.existsSync(cachePath)) return {};
-  try {
-    const parsed = JSON.parse(fs.readFileSync(cachePath, "utf8"));
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function normalizeGeoCacheHit(hit: GeoCacheValue): { lat: number; lng: number } | null {
-  if (Array.isArray(hit) && hit.length >= 2) {
-    const lat = toNumberOrNaN(hit[0]);
-    const lng = toNumberOrNaN(hit[1]);
-    return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
-  }
-  const anyHit: any = hit as any;
-  const lat = toNumberOrNaN(anyHit?.lat ?? anyHit?.latitude);
-  const lng = toNumberOrNaN(anyHit?.lng ?? anyHit?.longitude);
-  return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
-}
-
 function locationKey(row: AnyRow): string | null {
   const city = row?.cm_city ? String(row.cm_city).trim() : "";
   const state = row?.cm_state ? String(row.cm_state).trim() : "";
@@ -87,6 +58,15 @@ function locationKey(row: AnyRow): string | null {
   return parts.join(", ").toLowerCase();
 }
 
+function locationLabel(row: AnyRow): string | null {
+  const city = row?.cm_city ? String(row.cm_city).trim() : "";
+  const state = row?.cm_state ? String(row.cm_state).trim() : "";
+  const country = row?.cm_country ? String(row.cm_country).trim() : "";
+  const parts = [city, state, country].filter(Boolean);
+  if (parts.length < 2) return null;
+  return parts.join(", ");
+}
+
 async function fetchJsonArray(url: string): Promise<AnyRow[]> {
   const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) throw new Error(`fetch failed ${res.status} for ${url}`);
@@ -95,12 +75,112 @@ async function fetchJsonArray(url: string): Promise<AnyRow[]> {
   return Array.isArray(parsed) ? parsed : [];
 }
 
+/**
+ * ---------- KV-backed Geocoding (no extra local database file) ----------
+ * Uses your Vercel KV REST env vars (already in .env.local).
+ * We only geocode when:
+ *  - row has NO valid lat/lng (coords always take priority)
+ *  - row has at least city+state (or city+country)
+ *
+ * We cache results in KV so future requests are instant.
+ *
+ * IMPORTANT: To avoid rate limits, we cap how many new geocodes we do per request.
+ */
+const KV_URL = process.env.KV_REST_API_URL || "";
+const KV_TOKEN = process.env.KV_REST_API_TOKEN || "";
+const KV_ENABLED = Boolean(KV_URL && KV_TOKEN);
+
+async function kvGetJson<T>(key: string): Promise<T | null> {
+  if (!KV_ENABLED) return null;
+  const url = `${KV_URL}/get/${encodeURIComponent(key)}`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${KV_TOKEN}` },
+    cache: "no-store",
+  });
+  if (!res.ok) return null;
+  const data = await res.json();
+  // Upstash returns { result: "<string>" | null }
+  const raw = data?.result;
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
+async function kvSetJson(key: string, value: any): Promise<void> {
+  if (!KV_ENABLED) return;
+  const payload = JSON.stringify(value);
+  // Upstash REST: /set/<key>/<value>
+  const url = `${KV_URL}/set/${encodeURIComponent(key)}/${encodeURIComponent(payload)}`;
+  await fetch(url, {
+    headers: { Authorization: `Bearer ${KV_TOKEN}` },
+    cache: "no-store",
+  }).catch(() => {});
+}
+
+type LatLng = { lat: number; lng: number };
+
+async function geocodeWithNominatim(query: string): Promise<LatLng | null> {
+  // Nominatim requires a User-Agent; keep it stable.
+  const url =
+    `https://nominatim.openstreetmap.org/search?` +
+    `format=json&limit=1&addressdetails=0&q=${encodeURIComponent(query)}`;
+
+  const res = await fetch(url, {
+    headers: {
+      "User-Agent": "AviationSafetyWatch/1.0 (geocoder; contact: admin@aviationsafetywatch.com)",
+      "Accept-Language": "en",
+    },
+    cache: "no-store",
+  });
+
+  if (!res.ok) return null;
+
+  const arr = (await res.json()) as any[];
+  if (!Array.isArray(arr) || arr.length === 0) return null;
+
+  const lat = toNumberOrNaN(arr[0]?.lat);
+  const lng = toNumberOrNaN(arr[0]?.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+  return { lat, lng };
+}
+
+async function getCoordsForRowViaKV(row: AnyRow, geocodeBudget: { remaining: number }, stats: { cacheHits: number; geocoded: number; }): Promise<LatLng | null> {
+  const key = locationKey(row);
+  const label = locationLabel(row);
+  if (!key || !label) return null;
+
+  const cacheKey = `geo:${key}`;
+
+  // 1) Cache lookup
+  const cached = await kvGetJson<LatLng>(cacheKey);
+  if (cached && Number.isFinite(cached.lat) && Number.isFinite(cached.lng)) {
+    stats.cacheHits += 1;
+    return cached;
+  }
+
+  // 2) No cache: only geocode if we still have budget
+  if (geocodeBudget.remaining <= 0) return null;
+  geocodeBudget.remaining -= 1;
+
+  const result = await geocodeWithNominatim(label);
+  if (!result) return null;
+
+  stats.geocoded += 1;
+  // save to KV for future requests
+  await kvSetJson(cacheKey, result);
+
+  return result;
+}
+
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const startStr = searchParams.get("start");
   const endStr = searchParams.get("end");
-
-  const q = searchParams.get("q"); // keep if you're using search elsewhere; unused here
+  const q = searchParams.get("q"); // kept for future search use; unused here
 
   const startT = startStr ? Date.parse(startStr) : NaN;
   const endT = endStr ? Date.parse(endStr) : NaN;
@@ -108,12 +188,14 @@ export async function GET(req: Request) {
 
   const dataDir = path.join(process.cwd(), "data");
 
-  const useBlob =
-    String(process.env.USE_BLOB_DATA || "").toLowerCase() === "true";
+  const useBlob = String(process.env.USE_BLOB_DATA || "").toLowerCase() === "true";
 
-  // Use blob-manifest when blob mode is enabled; otherwise fall back to manifest.json (local mode)
   const blobManifestPath = path.join(dataDir, "blob-manifest.json");
   const localManifestPath = path.join(dataDir, "manifest.json");
+
+  // cap new geocodes per request (prevents timeouts + rate limit issues)
+  const geocodeBudget = { remaining: 25 };
+  const geocodeStats = { cacheHits: 0, geocoded: 0 };
 
   if (useBlob) {
     if (!fs.existsSync(blobManifestPath)) {
@@ -128,11 +210,7 @@ export async function GET(req: Request) {
       );
     }
 
-    const manifest: BlobManifestEntry[] = JSON.parse(
-      fs.readFileSync(blobManifestPath, "utf8")
-    );
-
-    const geoCache = readGeoCache(dataDir);
+    const manifest: BlobManifestEntry[] = JSON.parse(fs.readFileSync(blobManifestPath, "utf8"));
 
     let totalRows = 0;
     let rowsWithCoords = 0;
@@ -156,7 +234,7 @@ export async function GET(req: Request) {
       try {
         rows = await fetchJsonArray(block.blobUrl);
         blocksLoaded.push(block.label ?? block.blobUrl);
-      } catch (e) {
+      } catch {
         blocksLoaded.push(`${block.label ?? block.blobUrl} (FETCH/PARSE ERROR)`);
         continue;
       }
@@ -180,17 +258,13 @@ export async function GET(req: Request) {
         let lng = toNumberOrNaN(row?.cm_Longitude);
         let hasCoords = Number.isFinite(lat) && Number.isFinite(lng);
 
-        // fallback to cached city/state(/country) if missing coords
+        // Fallback: city/state/country via KV-cached geocode (ONLY if missing coords)
         if (!hasCoords) {
-          const key = locationKey(row);
-          if (key) {
-            const hit = geoCache[key];
-            const norm = hit ? normalizeGeoCacheHit(hit) : null;
-            if (norm) {
-              lat = norm.lat;
-              lng = norm.lng;
-              hasCoords = true;
-            }
+          const fallback = await getCoordsForRowViaKV(row, geocodeBudget, geocodeStats);
+          if (fallback) {
+            lat = fallback.lat;
+            lng = fallback.lng;
+            hasCoords = true;
           }
         }
 
@@ -199,9 +273,7 @@ export async function GET(req: Request) {
 
         const ntsbNum = row?.cm_ntsbNum ? String(row.cm_ntsbNum) : undefined;
 
-        const vehicle0 = Array.isArray(row?.cm_vehicles)
-          ? row.cm_vehicles[0]
-          : undefined;
+        const vehicle0 = Array.isArray(row?.cm_vehicles) ? row.cm_vehicles[0] : undefined;
 
         const aircraftType =
           vehicle0?.model
@@ -244,11 +316,21 @@ export async function GET(req: Request) {
       rowsWithCoords,
       rowsInRange,
       points,
-      debug: { useBlob, manifestEntries: manifest.length, blocksLoaded },
+      debug: {
+        useBlob,
+        manifestEntries: manifest.length,
+        blocksLoaded,
+        kvEnabled: KV_ENABLED,
+        geocode: {
+          cacheHits: geocodeStats.cacheHits,
+          geocodedThisRequest: geocodeStats.geocoded,
+          budgetRemaining: geocodeBudget.remaining,
+        },
+      },
     });
   }
 
-  // ----- Local mode (unchanged behavior) -----
+  // ----- Local mode (unchanged behavior, but uses KV geocode fallback too) -----
   if (!fs.existsSync(localManifestPath)) {
     return NextResponse.json(
       {
@@ -261,11 +343,7 @@ export async function GET(req: Request) {
     );
   }
 
-  const manifest: LocalManifestEntry[] = JSON.parse(
-    fs.readFileSync(localManifestPath, "utf8")
-  );
-
-  const geoCache = readGeoCache(dataDir);
+  const manifest: LocalManifestEntry[] = JSON.parse(fs.readFileSync(localManifestPath, "utf8"));
 
   let totalRows = 0;
   let rowsWithCoords = 0;
@@ -309,15 +387,11 @@ export async function GET(req: Request) {
       let hasCoords = Number.isFinite(lat) && Number.isFinite(lng);
 
       if (!hasCoords) {
-        const key = locationKey(row);
-        if (key) {
-          const hit = geoCache[key];
-          const norm = hit ? normalizeGeoCacheHit(hit) : null;
-          if (norm) {
-            lat = norm.lat;
-            lng = norm.lng;
-            hasCoords = true;
-          }
+        const fallback = await getCoordsForRowViaKV(row, geocodeBudget, geocodeStats);
+        if (fallback) {
+          lat = fallback.lat;
+          lng = fallback.lng;
+          hasCoords = true;
         }
       }
 
@@ -326,9 +400,7 @@ export async function GET(req: Request) {
 
       const ntsbNum = row?.cm_ntsbNum ? String(row.cm_ntsbNum) : undefined;
 
-      const vehicle0 = Array.isArray(row?.cm_vehicles)
-        ? row.cm_vehicles[0]
-        : undefined;
+      const vehicle0 = Array.isArray(row?.cm_vehicles) ? row.cm_vehicles[0] : undefined;
 
       const aircraftType =
         vehicle0?.model
@@ -371,6 +443,14 @@ export async function GET(req: Request) {
     rowsWithCoords,
     rowsInRange,
     points,
-    debug: { useBlob },
+    debug: {
+      useBlob,
+      kvEnabled: KV_ENABLED,
+      geocode: {
+        cacheHits: geocodeStats.cacheHits,
+        geocodedThisRequest: geocodeStats.geocoded,
+        budgetRemaining: geocodeBudget.remaining,
+      },
+    },
   });
 }

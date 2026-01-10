@@ -1,0 +1,23 @@
+# dependencies
+node_modules/
+
+# local env / secrets
+.env.local
+.env*.local
+
+# vercel local folder
+.vercel/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# build output
+.next/
+out/
+dist/
