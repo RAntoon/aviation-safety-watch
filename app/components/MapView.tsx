@@ -26,16 +26,29 @@ type MapPoint = {
   state?: string;
   country?: string;
 
-  // Existing
   docketUrl?: string;
   ntsbCaseId?: string;
 
   summary?: string;
-  aircraftType?: string;
 
-  // ✅ NEW: tail number + optional direct report link (if your API provides it)
+  // These may or may not exist depending on your API shape:
   tailNumber?: string;
+  registration?: string;
+  aircraftRegistration?: string;
+
+  aircraftType?: string;
+  aircraftMakeModel?: string;
+  makeModel?: string;
+  aircraftModel?: string;
+
+  // Direct report info (best if your API provides it)
   reportUrl?: string;
+  reportPdfUrl?: string;
+  reportPDF?: string;
+
+  // If your API provides just the report number (e.g., "AAR1001")
+  reportNumber?: string;
+  reportId?: string;
 };
 
 function isoDate(d: Date) {
@@ -78,15 +91,11 @@ function shortNarrative(input?: string, maxChars = 300) {
 /**
  * Spread points that share identical coordinates into a small ring.
  * No extra libs required. Makes overlapping dots clickable.
- *
- * radiusDeg: ~0.03 degrees ≈ 2 miles at equator (smaller at higher lat).
- * We use a smaller default: 0.015 (~1 mile). Adjust if you want tighter.
  */
 function spreadOverlaps(points: MapPoint[], radiusDeg = 0.015): MapPoint[] {
   const groups = new Map<string, MapPoint[]>();
 
   for (const p of points) {
-    // Key by rounded coords so tiny float diffs still group
     const key = `${p.lat.toFixed(6)},${p.lng.toFixed(6)}`;
     const arr = groups.get(key) ?? [];
     arr.push(p);
@@ -101,13 +110,10 @@ function spreadOverlaps(points: MapPoint[], radiusDeg = 0.015): MapPoint[] {
       continue;
     }
 
-    // Spread around a circle centered at original point
     const n = arr.length;
     for (let i = 0; i < n; i++) {
       const p = arr[i];
       const angle = (2 * Math.PI * i) / n;
-
-      // Slightly increase radius with count so huge stacks spread more
       const r = radiusDeg * (1 + Math.min(2, n / 25));
 
       const lat2 = p.lat + r * Math.sin(angle);
@@ -115,7 +121,6 @@ function spreadOverlaps(points: MapPoint[], radiusDeg = 0.015): MapPoint[] {
 
       out.push({
         ...p,
-        // keep id stable but unique in case duplicates exist
         id: `${p.id}__s${i}`,
         lat: lat2,
         lng: lng2,
@@ -124,6 +129,80 @@ function spreadOverlaps(points: MapPoint[], radiusDeg = 0.015): MapPoint[] {
   }
 
   return out;
+}
+
+function cleanTail(t?: string) {
+  if (!t) return "";
+  const s = String(t).trim();
+  return s;
+}
+
+function pickTail(p: MapPoint) {
+  const anyp = p as any;
+  return cleanTail(
+    p.tailNumber ??
+      p.registration ??
+      p.aircraftRegistration ??
+      anyp.tail ??
+      anyp.tail_number ??
+      anyp.aircraft_registration ??
+      anyp.registrationNumber ??
+      anyp.nNumber ??
+      anyp.n_number
+  );
+}
+
+function pickFullAircraftType(p: MapPoint) {
+  const anyp = p as any;
+  const s =
+    p.aircraftMakeModel ??
+    p.makeModel ??
+    p.aircraftType ??
+    p.aircraftModel ??
+    anyp.aircraft_make_model ??
+    anyp.make_model ??
+    anyp.aircraft_type ??
+    anyp.aircraft_model ??
+    anyp.aircraft ??
+    anyp.aircraftDescription;
+
+  return s ? String(s).trim() : "";
+}
+
+function buildDirectReportPdfUrl(p: MapPoint): string | undefined {
+  const anyp = p as any;
+
+  // 1) If API already gives a direct PDF URL, use it.
+  const direct =
+    p.reportPdfUrl ??
+    p.reportPDF ??
+    p.reportUrl ??
+    anyp.reportPdfUrl ??
+    anyp.reportPDF ??
+    anyp.report_pdf_url ??
+    anyp.report_url ??
+    anyp.pdfUrl ??
+    anyp.pdf_url;
+
+  if (direct) {
+    const u = String(direct).trim();
+    if (/^https?:\/\//i.test(u) && /\.pdf(\?|#|$)/i.test(u)) return u;
+  }
+
+  // 2) If API gives report number/id like "AAR1001", construct the known NTSB reports path.
+  const reportId = (p.reportNumber ?? p.reportId ?? anyp.reportNumber ?? anyp.reportId ?? anyp.report_no ?? anyp.report_no2) as
+    | string
+    | undefined;
+
+  if (reportId) {
+    const id = String(reportId).trim().replace(/\.pdf$/i, "");
+    if (/^[A-Z]{2,4}\d{3,4}$/i.test(id)) {
+      return `https://www.ntsb.gov/investigations/AccidentReports/Reports/${encodeURIComponent(id)}.pdf`;
+    }
+  }
+
+  // No safe direct link available
+  return undefined;
 }
 
 export default function MapView() {
@@ -174,9 +253,7 @@ export default function MapView() {
 
       const rawPoints: MapPoint[] = Array.isArray(json?.points) ? json.points : [];
 
-      // ✅ Spread overlaps (same airport / same coords)
       const spread = spreadOverlaps(rawPoints);
-
       setPoints(spread);
 
       const dbg = `rows=${json?.totalRows ?? "?"}, coords=${json?.rowsWithCoords ?? "?"}, inRange=${json?.rowsInRange ?? "?"}`;
@@ -214,9 +291,7 @@ export default function MapView() {
           fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
         }}
       >
-        <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 6 }}>
-          Aviation Safety Watch
-        </div>
+        <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 6 }}>Aviation Safety Watch</div>
         <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 10 }}>
           Data source: NTSB exports · Default range: last 12 months
         </div>
@@ -267,15 +342,7 @@ export default function MapView() {
           <div style={{ fontWeight: 800, marginBottom: 6 }}>Legend</div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-            <span
-              style={{
-                width: 14,
-                height: 14,
-                borderRadius: 7,
-                background: colorFor("fatal"),
-                display: "inline-block",
-              }}
-            />
+            <span style={{ width: 14, height: 14, borderRadius: 7, background: colorFor("fatal"), display: "inline-block" }} />
             <div style={{ fontSize: 13 }}>
               Fatal accidents (red): <b>{counts.fatal}</b>
             </div>
@@ -283,13 +350,7 @@ export default function MapView() {
 
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
             <span
-              style={{
-                width: 14,
-                height: 14,
-                borderRadius: 7,
-                background: colorFor("accident"),
-                display: "inline-block",
-              }}
+              style={{ width: 14, height: 14, borderRadius: 7, background: colorFor("accident"), display: "inline-block" }}
             />
             <div style={{ fontSize: 13 }}>
               Accidents (orange): <b>{counts.accident}</b>
@@ -298,13 +359,7 @@ export default function MapView() {
 
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <span
-              style={{
-                width: 14,
-                height: 14,
-                borderRadius: 7,
-                background: colorFor("incident"),
-                display: "inline-block",
-              }}
+              style={{ width: 14, height: 14, borderRadius: 7, background: colorFor("incident"), display: "inline-block" }}
             />
             <div style={{ fontSize: 13 }}>
               Incidents (yellow): <b>{counts.incident}</b>
@@ -314,57 +369,32 @@ export default function MapView() {
 
         <div style={{ marginTop: 10, fontSize: 12, lineHeight: 1.3 }}>
           <b>Status:</b>{" "}
-          <span style={{ color: status.includes("not OK") || status.includes("failed") ? "#d32f2f" : "#222" }}>
-            {status}
-          </span>
+          <span style={{ color: status.includes("not OK") || status.includes("failed") ? "#d32f2f" : "#222" }}>{status}</span>
         </div>
       </div>
 
       {/* Map */}
-      <MapContainer
-        center={center}
-        zoom={4}
-        scrollWheelZoom
-        style={{ height: "100%", width: "100%" }}
-        zoomControl={false}
-      >
+      <MapContainer center={center} zoom={4} scrollWheelZoom style={{ height: "100%", width: "100%" }} zoomControl={false}>
         <ZoomControl position="bottomright" />
 
-        <TileLayer
-          attribution="&copy; OpenStreetMap contributors"
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        />
+        <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
 
         {points.map((p) => {
-          // ✅ Tail number in front of aircraft type (popup title)
-          const aircraftLabel = p.aircraftType
-            ? p.tailNumber
-              ? `${p.tailNumber} - ${p.aircraftType}`
-              : p.aircraftType
-            : p.tailNumber
-            ? p.tailNumber
-            : "";
+          // ✅ EXACT title format: "Fatal Accident - N123FR Cirrus SR22T"
+          const tail = pickTail(p);
+          const fullType = pickFullAircraftType(p);
 
-          const titleRight = aircraftLabel ? ` - ${aircraftLabel}` : "";
+          const details = [tail, fullType].filter(Boolean).join(" ");
+          const titleRight = details ? ` - ${details}` : "";
 
-          // ✅ Docket link (always show if we can compute it)
+          // ✅ KEEP DOCKET LINK LOGIC (unchanged)
           const docketUrl =
-            p.docketUrl ||
-            (p.ntsbCaseId
+            p.ntsbCaseId
               ? `https://data.ntsb.gov/Docket/?NTSBNumber=${encodeURIComponent(String(p.ntsbCaseId).trim())}`
-              : undefined);
+              : undefined;
 
-          // ✅ Report link:
-          // - If your API provides p.reportUrl, we use that (best)
-          // - Otherwise we fall back to CAROL basic-search for the NTSB number
-          //   (it will show whatever is released: prelim/final, etc.)
-          const reportUrl =
-            p.reportUrl ||
-            (p.ntsbCaseId
-              ? `https://data.ntsb.gov/carol-main-public/basic-search?query=${encodeURIComponent(
-                  String(p.ntsbCaseId).trim()
-                )}`
-              : `https://data.ntsb.gov/carol-main-public/basic-search`);
+          // ✅ Report must be a DIRECT PDF link (no CAROL fallback)
+          const reportPdfUrl = buildDirectReportPdfUrl(p);
 
           return (
             <CircleMarker
@@ -382,11 +412,7 @@ export default function MapView() {
               <Popup autoPan={false} closeOnClick={false}>
                 <div style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" }}>
                   <div style={{ fontWeight: 800, marginBottom: 6 }}>
-                    {p.kind === "fatal"
-                      ? `Fatal Accident${titleRight}`
-                      : p.kind === "accident"
-                      ? `Accident${titleRight}`
-                      : `Incident${titleRight}`}
+                    {p.kind === "fatal" ? `Fatal Accident${titleRight}` : p.kind === "accident" ? `Accident${titleRight}` : `Incident${titleRight}`}
                   </div>
 
                   <div style={{ fontSize: 13, marginBottom: 6 }}>
@@ -408,16 +434,17 @@ export default function MapView() {
                   </div>
 
                   {p.summary ? (
-                    <div style={{ fontSize: 12, opacity: 0.9, marginBottom: 8 }}>
-                      {shortNarrative(p.summary, 320)}
-                    </div>
+                    <div style={{ fontSize: 12, opacity: 0.9, marginBottom: 8 }}>{shortNarrative(p.summary, 320)}</div>
                   ) : null}
 
-                  {/* ✅ Links: Report + Docket */}
                   <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                    <a href={reportUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>
-                      Report →
-                    </a>
+                    {reportPdfUrl ? (
+                      <a href={reportPdfUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>
+                        Report →
+                      </a>
+                    ) : (
+                      <span style={{ fontWeight: 800, opacity: 0.65 }}>Report: Not available</span>
+                    )}
 
                     {docketUrl ? (
                       <a href={docketUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>
