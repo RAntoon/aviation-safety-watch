@@ -6,6 +6,7 @@ import "leaflet/dist/leaflet.css";
 import * as RL from "react-leaflet";
 import ClockWidget from "./ClockWidget";
 
+// ✅ Hard-stop the annoying TS mismatch in some Vercel builds.
 const MapContainer = RL.MapContainer as unknown as React.FC<any>;
 const TileLayer = RL.TileLayer as unknown as React.FC<any>;
 const CircleMarker = RL.CircleMarker as unknown as React.FC<any>;
@@ -25,13 +26,14 @@ type MapPoint = {
   state?: string;
   country?: string;
 
-  docketUrl?: string;
   ntsbCaseId?: string;
+  docketUrl?: string;
+  reportUrl?: string;
 
   summary?: string;
-  aircraftType?: string;
 
-  tailNumber?: string; // ✅ NEW
+  tailNumber?: string;
+  aircraftType?: string;
 };
 
 function isoDate(d: Date) {
@@ -49,9 +51,9 @@ function last12MonthsRange() {
 }
 
 function colorFor(kind: PointKind) {
-  if (kind === "fatal") return "#d32f2f";
-  if (kind === "accident") return "#fb8c00";
-  return "#fdd835";
+  if (kind === "fatal") return "#d32f2f"; // red
+  if (kind === "accident") return "#fb8c00"; // orange
+  return "#fdd835"; // yellow
 }
 
 function shortNarrative(input?: string, maxChars = 300) {
@@ -69,6 +71,9 @@ function shortNarrative(input?: string, maxChars = 300) {
   return first.length > maxChars ? first.slice(0, maxChars - 1) + "…" : first;
 }
 
+/**
+ * Spread points that share identical coordinates into a small ring.
+ */
 function spreadOverlaps(points: MapPoint[], radiusDeg = 0.015): MapPoint[] {
   const groups = new Map<string, MapPoint[]>();
 
@@ -108,10 +113,28 @@ function spreadOverlaps(points: MapPoint[], radiusDeg = 0.015): MapPoint[] {
   return out;
 }
 
+function eventLabel(kind: PointKind) {
+  if (kind === "fatal") return "Fatal Accident";
+  if (kind === "accident") return "Accident";
+  return "Incident";
+}
+
+function buildTitleLine(p: MapPoint) {
+  // Format: "Fatal Accident - N123FR Cirrus SR22T"
+  const tail = p.tailNumber ? String(p.tailNumber).trim() : "";
+  const type = p.aircraftType ? String(p.aircraftType).trim() : "";
+
+  const rightParts = [tail, type].filter(Boolean).join(" ");
+  return rightParts ? `${eventLabel(p.kind)} - ${rightParts}` : `${eventLabel(p.kind)}`;
+}
+
 export default function MapView() {
   const defaultRange = useMemo(() => last12MonthsRange(), []);
   const [start, setStart] = useState<string>(isoDate(defaultRange.start));
   const [end, setEnd] = useState<string>(isoDate(defaultRange.end));
+
+  // Search
+  const [q, setQ] = useState<string>("");
 
   const [points, setPoints] = useState<MapPoint[]>([]);
   const [status, setStatus] = useState<string>("Idle");
@@ -131,18 +154,26 @@ export default function MapView() {
     return { fatal, accident, incident, total: points.length };
   }, [points]);
 
-  async function load() {
+  async function load(opts?: { overrideQ?: string }) {
     setLoading(true);
     setStatus("Loading…");
     try {
-      const url = `/api/accidents?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
+      const qToUse = (opts?.overrideQ ?? q).trim();
+
+      const url =
+        `/api/accidents?start=${encodeURIComponent(start)}` +
+        `&end=${encodeURIComponent(end)}` +
+        (qToUse ? `&q=${encodeURIComponent(qToUse)}` : "");
+
       const res = await fetch(url, { cache: "no-store" });
 
       const text = await res.text();
       let json: any = null;
       try {
         json = JSON.parse(text);
-      } catch {}
+      } catch {
+        // leave null
+      }
 
       if (!res.ok) {
         const upstream = json?.error || json?.message || text?.slice(0, 300);
@@ -157,9 +188,7 @@ export default function MapView() {
 
       setPoints(spread);
 
-      const dbg = `rows=${json?.totalRows ?? "?"}, coords=${json?.rowsWithCoords ?? "?"}, inRange=${
-        json?.rowsInRange ?? "?"
-      }`;
+      const dbg = `rows=${json?.totalRows ?? "?"}, coords=${json?.rowsWithCoords ?? "?"}, inRange=${json?.rowsInRange ?? "?"}, matched=${json?.rowsMatchedQuery ?? "?"}`;
       setStatus(`OK. Loaded ${spread.length} points. (${dbg})`);
     } catch (e: any) {
       setPoints([]);
@@ -176,26 +205,34 @@ export default function MapView() {
   }, []);
 
   return (
-    <div style={{ height: "100vh", width: "100vw", position: "relative" }}>
+    <div className="asw-root">
       <ClockWidget />
 
-      <div
-        style={{
-          position: "absolute",
-          zIndex: 1000,
-          top: 12,
-          left: 12,
-          width: 320,
-          padding: 14,
-          borderRadius: 12,
-          background: "rgba(255,255,255,0.95)",
-          boxShadow: "0 10px 30px rgba(0,0,0,0.15)",
-          fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
-        }}
-      >
-        <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 6 }}>Aviation Safety Watch</div>
+      {/* Control panel */}
+      <div className="asw-panel">
+        <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 6 }}>
+          Aviation Safety Watch
+        </div>
         <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 10 }}>
           Data source: NTSB exports · Default range: last 12 months
+        </div>
+
+        {/* Search */}
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Search</div>
+          <input
+            type="text"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Tail, make/model, city, narrative keywords…"
+            style={{ width: "100%", padding: 8, borderRadius: 8, border: "1px solid #ddd" }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") load();
+            }}
+          />
+          <div style={{ fontSize: 11, opacity: 0.75, marginTop: 4 }}>
+            Tip: multiple words are supported (all terms must match).
+          </div>
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -221,7 +258,7 @@ export default function MapView() {
 
         <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10 }}>
           <button
-            onClick={load}
+            onClick={() => load()}
             disabled={loading}
             style={{
               padding: "8px 12px",
@@ -230,9 +267,29 @@ export default function MapView() {
               background: loading ? "#f4f4f4" : "#fff",
               cursor: loading ? "not-allowed" : "pointer",
               fontWeight: 700,
+              whiteSpace: "nowrap",
             }}
           >
             {loading ? "Loading…" : "Reload"}
+          </button>
+
+          <button
+            onClick={() => {
+              setQ("");
+              load({ overrideQ: "" });
+            }}
+            disabled={loading}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 10,
+              border: "1px solid #ddd",
+              background: loading ? "#f4f4f4" : "#fff",
+              cursor: loading ? "not-allowed" : "pointer",
+              fontWeight: 700,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Clear
           </button>
 
           <div style={{ fontSize: 12, opacity: 0.85 }}>
@@ -301,25 +358,21 @@ export default function MapView() {
         </div>
       </div>
 
-      <MapContainer center={center} zoom={4} scrollWheelZoom style={{ height: "100%", width: "100%" }} zoomControl={false}>
+      {/* Map */}
+      <MapContainer center={center} zoom={4} scrollWheelZoom className="asw-map" zoomControl={false}>
         <ZoomControl position="bottomright" />
 
-        <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+        <TileLayer
+          attribution="&copy; OpenStreetMap contributors"
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        />
 
         {points.map((p) => {
-          // ✅ Build: "N123FR Cirrus SR22T"
-          const tailAndType = [p.tailNumber, p.aircraftType].filter(Boolean).join(" ").trim();
-          const titleRight = tailAndType ? ` - ${tailAndType}` : "";
-
+          // Docket URL stays exactly as your working behavior
           const docketUrl =
             p.ntsbCaseId
               ? `https://data.ntsb.gov/Docket/?NTSBNumber=${encodeURIComponent(String(p.ntsbCaseId).trim())}`
               : undefined;
-
-          const searchUrl =
-            p.ntsbCaseId
-              ? `https://data.ntsb.gov/Docket/forms/Searchdocket?NTSBNumber=${encodeURIComponent(String(p.ntsbCaseId).trim())}`
-              : `https://data.ntsb.gov/Docket/forms/Searchdocket`;
 
           return (
             <CircleMarker
@@ -335,13 +388,7 @@ export default function MapView() {
             >
               <Popup autoPan={false} closeOnClick={false}>
                 <div style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" }}>
-                  <div style={{ fontWeight: 800, marginBottom: 6 }}>
-                    {p.kind === "fatal"
-                      ? `Fatal Accident${titleRight}`
-                      : p.kind === "accident"
-                      ? `Accident${titleRight}`
-                      : `Incident${titleRight}`}
-                  </div>
+                  <div style={{ fontWeight: 800, marginBottom: 6 }}>{buildTitleLine(p)}</div>
 
                   <div style={{ fontSize: 13, marginBottom: 6 }}>
                     {p.date ? (
@@ -368,15 +415,19 @@ export default function MapView() {
                   ) : null}
 
                   <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                    {p.reportUrl ? (
+                      <a href={p.reportUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>
+                        Open report →
+                      </a>
+                    ) : (
+                      <span style={{ fontWeight: 800, opacity: 0.55 }}>Report not available</span>
+                    )}
+
                     {docketUrl ? (
                       <a href={docketUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>
                         Open docket →
                       </a>
                     ) : null}
-
-                    <a href={searchUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>
-                      Search docket →
-                    </a>
                   </div>
                 </div>
               </Popup>
@@ -384,6 +435,46 @@ export default function MapView() {
           );
         })}
       </MapContainer>
+
+      {/* Mobile + layout styling */}
+      <style jsx global>{`
+        .asw-root {
+          height: 100dvh;
+          width: 100vw;
+          position: relative;
+        }
+        .asw-map {
+          height: 100%;
+          width: 100%;
+        }
+        .asw-panel {
+          position: absolute;
+          z-index: 1000;
+          top: 12px;
+          left: 12px;
+          width: 340px;
+          max-height: calc(100dvh - 24px);
+          overflow: auto;
+          padding: 14px;
+          border-radius: 12px;
+          background: rgba(255, 255, 255, 0.95);
+          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+          font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        }
+
+        @media (max-width: 760px) {
+          .asw-panel {
+            top: auto;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            width: auto;
+            border-radius: 16px 16px 0 0;
+            max-height: 50dvh;
+            box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.15);
+          }
+        }
+      `}</style>
     </div>
   );
 }
