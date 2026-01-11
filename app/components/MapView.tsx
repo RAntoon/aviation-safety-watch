@@ -40,7 +40,7 @@ function isoDate(d: Date) {
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
-  return ${yyyy}-${mm}-${dd};
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 function last12MonthsRange() {
@@ -78,7 +78,7 @@ function spreadOverlaps(points: MapPoint[], radiusDeg = 0.015): MapPoint[] {
   const groups = new Map<string, MapPoint[]>();
 
   for (const p of points) {
-    const key = ${p.lat.toFixed(6)},${p.lng.toFixed(6)};
+    const key = `${p.lat.toFixed(6)},${p.lng.toFixed(6)}`;
     const arr = groups.get(key) ?? [];
     arr.push(p);
     groups.set(key, arr);
@@ -103,7 +103,7 @@ function spreadOverlaps(points: MapPoint[], radiusDeg = 0.015): MapPoint[] {
 
       out.push({
         ...p,
-        id: ${p.id}__s${i},
+        id: `${p.id}__s${i}`,
         lat: lat2,
         lng: lng2,
       });
@@ -125,7 +125,7 @@ function buildTitleLine(p: MapPoint) {
   const type = p.aircraftType ? String(p.aircraftType).trim() : "";
 
   const rightParts = [tail, type].filter(Boolean).join(" ");
-  return rightParts ? ${eventLabel(p.kind)} - ${rightParts} : ${eventLabel(p.kind)};
+  return rightParts ? `${eventLabel(p.kind)} - ${rightParts}` : `${eventLabel(p.kind)}`;
 }
 
 export default function MapView() {
@@ -161,9 +161,9 @@ export default function MapView() {
       const qToUse = (opts?.overrideQ ?? q).trim();
 
       const url =
-        /api/accidents?start=${encodeURIComponent(start)} +
-        &end=${encodeURIComponent(end)} +
-        (qToUse ? &q=${encodeURIComponent(qToUse)} : "");
+        `/api/accidents?start=${encodeURIComponent(start)}` +
+        `&end=${encodeURIComponent(end)}` +
+        (qToUse ? `&q=${encodeURIComponent(qToUse)}` : "");
 
       const res = await fetch(url, { cache: "no-store" });
 
@@ -178,7 +178,7 @@ export default function MapView() {
       if (!res.ok) {
         const upstream = json?.error || json?.message || text?.slice(0, 300);
         setPoints([]);
-        setStatus(Accidents fetch not OK (${res.status}). ${String(upstream || "").slice(0, 140)});
+        setStatus(`Accidents fetch not OK (${res.status}). ${String(upstream || "").slice(0, 140)}`);
         console.error("API /api/accidents error:", { status: res.status, upstream });
         return;
       }
@@ -188,11 +188,11 @@ export default function MapView() {
 
       setPoints(spread);
 
-      const dbg = rows=${json?.totalRows ?? "?"}, coords=${json?.rowsWithCoords ?? "?"}, inRange=${json?.rowsInRange ?? "?"}, matched=${json?.rowsMatchedQuery ?? "?"};
-      setStatus(OK. Loaded ${spread.length} points. (${dbg}));
+      const dbg = `rows=${json?.totalRows ?? "?"}, coords=${json?.rowsWithCoords ?? "?"}, inRange=${json?.rowsInRange ?? "?"}, matched=${json?.rowsMatchedQuery ?? "?"}`;
+      setStatus(`OK. Loaded ${spread.length} points. (${dbg})`);
     } catch (e: any) {
       setPoints([]);
-      setStatus(Fetch failed (network/runtime). See console.);
+      setStatus(`Fetch failed (network/runtime). See console.`);
       console.error(e);
     } finally {
       setLoading(false);
@@ -371,7 +371,7 @@ export default function MapView() {
           // Docket URL stays exactly as your working behavior
           const docketUrl =
             p.ntsbCaseId
-              ? https://data.ntsb.gov/Docket/?NTSBNumber=${encodeURIComponent(String(p.ntsbCaseId).trim())}
+              ? `https://data.ntsb.gov/Docket/?NTSBNumber=${encodeURIComponent(String(p.ntsbCaseId).trim())}`
               : undefined;
 
           return (
