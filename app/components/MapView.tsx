@@ -6,7 +6,6 @@ import "leaflet/dist/leaflet.css";
 import * as RL from "react-leaflet";
 import ClockWidget from "./ClockWidget";
 
-// ✅ Hard-stop the annoying TS mismatch in some Vercel builds.
 const MapContainer = RL.MapContainer as unknown as React.FC<any>;
 const TileLayer = RL.TileLayer as unknown as React.FC<any>;
 const CircleMarker = RL.CircleMarker as unknown as React.FC<any>;
@@ -30,25 +29,9 @@ type MapPoint = {
   ntsbCaseId?: string;
 
   summary?: string;
-
-  // These may or may not exist depending on your API shape:
-  tailNumber?: string;
-  registration?: string;
-  aircraftRegistration?: string;
-
   aircraftType?: string;
-  aircraftMakeModel?: string;
-  makeModel?: string;
-  aircraftModel?: string;
 
-  // Direct report info (best if your API provides it)
-  reportUrl?: string;
-  reportPdfUrl?: string;
-  reportPDF?: string;
-
-  // If your API provides just the report number (e.g., "AAR1001")
-  reportNumber?: string;
-  reportId?: string;
+  tailNumber?: string; // ✅ NEW
 };
 
 function isoDate(d: Date) {
@@ -66,9 +49,9 @@ function last12MonthsRange() {
 }
 
 function colorFor(kind: PointKind) {
-  if (kind === "fatal") return "#d32f2f"; // red
-  if (kind === "accident") return "#fb8c00"; // orange
-  return "#fdd835"; // yellow
+  if (kind === "fatal") return "#d32f2f";
+  if (kind === "accident") return "#fb8c00";
+  return "#fdd835";
 }
 
 function shortNarrative(input?: string, maxChars = 300) {
@@ -77,21 +60,15 @@ function shortNarrative(input?: string, maxChars = 300) {
     .replace(/&#x0D;|\\r\\n|\\n|\\r/g, "\n")
     .trim();
 
-  // Take first non-empty paragraph-ish line
   const first = cleaned
     .split("\n")
     .map((s) => s.trim())
     .filter(Boolean)[0];
 
   if (!first) return "";
-
   return first.length > maxChars ? first.slice(0, maxChars - 1) + "…" : first;
 }
 
-/**
- * Spread points that share identical coordinates into a small ring.
- * No extra libs required. Makes overlapping dots clickable.
- */
 function spreadOverlaps(points: MapPoint[], radiusDeg = 0.015): MapPoint[] {
   const groups = new Map<string, MapPoint[]>();
 
@@ -131,80 +108,6 @@ function spreadOverlaps(points: MapPoint[], radiusDeg = 0.015): MapPoint[] {
   return out;
 }
 
-function cleanTail(t?: string) {
-  if (!t) return "";
-  const s = String(t).trim();
-  return s;
-}
-
-function pickTail(p: MapPoint) {
-  const anyp = p as any;
-  return cleanTail(
-    p.tailNumber ??
-      p.registration ??
-      p.aircraftRegistration ??
-      anyp.tail ??
-      anyp.tail_number ??
-      anyp.aircraft_registration ??
-      anyp.registrationNumber ??
-      anyp.nNumber ??
-      anyp.n_number
-  );
-}
-
-function pickFullAircraftType(p: MapPoint) {
-  const anyp = p as any;
-  const s =
-    p.aircraftMakeModel ??
-    p.makeModel ??
-    p.aircraftType ??
-    p.aircraftModel ??
-    anyp.aircraft_make_model ??
-    anyp.make_model ??
-    anyp.aircraft_type ??
-    anyp.aircraft_model ??
-    anyp.aircraft ??
-    anyp.aircraftDescription;
-
-  return s ? String(s).trim() : "";
-}
-
-function buildDirectReportPdfUrl(p: MapPoint): string | undefined {
-  const anyp = p as any;
-
-  // 1) If API already gives a direct PDF URL, use it.
-  const direct =
-    p.reportPdfUrl ??
-    p.reportPDF ??
-    p.reportUrl ??
-    anyp.reportPdfUrl ??
-    anyp.reportPDF ??
-    anyp.report_pdf_url ??
-    anyp.report_url ??
-    anyp.pdfUrl ??
-    anyp.pdf_url;
-
-  if (direct) {
-    const u = String(direct).trim();
-    if (/^https?:\/\//i.test(u) && /\.pdf(\?|#|$)/i.test(u)) return u;
-  }
-
-  // 2) If API gives report number/id like "AAR1001", construct the known NTSB reports path.
-  const reportId = (p.reportNumber ?? p.reportId ?? anyp.reportNumber ?? anyp.reportId ?? anyp.report_no ?? anyp.report_no2) as
-    | string
-    | undefined;
-
-  if (reportId) {
-    const id = String(reportId).trim().replace(/\.pdf$/i, "");
-    if (/^[A-Z]{2,4}\d{3,4}$/i.test(id)) {
-      return `https://www.ntsb.gov/investigations/AccidentReports/Reports/${encodeURIComponent(id)}.pdf`;
-    }
-  }
-
-  // No safe direct link available
-  return undefined;
-}
-
 export default function MapView() {
   const defaultRange = useMemo(() => last12MonthsRange(), []);
   const [start, setStart] = useState<string>(isoDate(defaultRange.start));
@@ -214,7 +117,7 @@ export default function MapView() {
   const [status, setStatus] = useState<string>("Idle");
   const [loading, setLoading] = useState<boolean>(false);
 
-  const center: LatLngExpression = useMemo(() => [39.5, -98.35], []); // US-centered default
+  const center: LatLngExpression = useMemo(() => [39.5, -98.35], []);
 
   const counts = useMemo(() => {
     let fatal = 0,
@@ -239,9 +142,7 @@ export default function MapView() {
       let json: any = null;
       try {
         json = JSON.parse(text);
-      } catch {
-        // leave null
-      }
+      } catch {}
 
       if (!res.ok) {
         const upstream = json?.error || json?.message || text?.slice(0, 300);
@@ -252,11 +153,13 @@ export default function MapView() {
       }
 
       const rawPoints: MapPoint[] = Array.isArray(json?.points) ? json.points : [];
-
       const spread = spreadOverlaps(rawPoints);
+
       setPoints(spread);
 
-      const dbg = `rows=${json?.totalRows ?? "?"}, coords=${json?.rowsWithCoords ?? "?"}, inRange=${json?.rowsInRange ?? "?"}`;
+      const dbg = `rows=${json?.totalRows ?? "?"}, coords=${json?.rowsWithCoords ?? "?"}, inRange=${
+        json?.rowsInRange ?? "?"
+      }`;
       setStatus(`OK. Loaded ${spread.length} points. (${dbg})`);
     } catch (e: any) {
       setPoints([]);
@@ -276,7 +179,6 @@ export default function MapView() {
     <div style={{ height: "100vh", width: "100vw", position: "relative" }}>
       <ClockWidget />
 
-      {/* Control panel */}
       <div
         style={{
           position: "absolute",
@@ -342,7 +244,15 @@ export default function MapView() {
           <div style={{ fontWeight: 800, marginBottom: 6 }}>Legend</div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-            <span style={{ width: 14, height: 14, borderRadius: 7, background: colorFor("fatal"), display: "inline-block" }} />
+            <span
+              style={{
+                width: 14,
+                height: 14,
+                borderRadius: 7,
+                background: colorFor("fatal"),
+                display: "inline-block",
+              }}
+            />
             <div style={{ fontSize: 13 }}>
               Fatal accidents (red): <b>{counts.fatal}</b>
             </div>
@@ -350,7 +260,13 @@ export default function MapView() {
 
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
             <span
-              style={{ width: 14, height: 14, borderRadius: 7, background: colorFor("accident"), display: "inline-block" }}
+              style={{
+                width: 14,
+                height: 14,
+                borderRadius: 7,
+                background: colorFor("accident"),
+                display: "inline-block",
+              }}
             />
             <div style={{ fontSize: 13 }}>
               Accidents (orange): <b>{counts.accident}</b>
@@ -359,7 +275,13 @@ export default function MapView() {
 
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <span
-              style={{ width: 14, height: 14, borderRadius: 7, background: colorFor("incident"), display: "inline-block" }}
+              style={{
+                width: 14,
+                height: 14,
+                borderRadius: 7,
+                background: colorFor("incident"),
+                display: "inline-block",
+              }}
             />
             <div style={{ fontSize: 13 }}>
               Incidents (yellow): <b>{counts.incident}</b>
@@ -369,32 +291,35 @@ export default function MapView() {
 
         <div style={{ marginTop: 10, fontSize: 12, lineHeight: 1.3 }}>
           <b>Status:</b>{" "}
-          <span style={{ color: status.includes("not OK") || status.includes("failed") ? "#d32f2f" : "#222" }}>{status}</span>
+          <span
+            style={{
+              color: status.includes("not OK") || status.includes("failed") ? "#d32f2f" : "#222",
+            }}
+          >
+            {status}
+          </span>
         </div>
       </div>
 
-      {/* Map */}
       <MapContainer center={center} zoom={4} scrollWheelZoom style={{ height: "100%", width: "100%" }} zoomControl={false}>
         <ZoomControl position="bottomright" />
 
         <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
 
         {points.map((p) => {
-          // ✅ EXACT title format: "Fatal Accident - N123FR Cirrus SR22T"
-          const tail = pickTail(p);
-          const fullType = pickFullAircraftType(p);
+          // ✅ Build: "N123FR Cirrus SR22T"
+          const tailAndType = [p.tailNumber, p.aircraftType].filter(Boolean).join(" ").trim();
+          const titleRight = tailAndType ? ` - ${tailAndType}` : "";
 
-          const details = [tail, fullType].filter(Boolean).join(" ");
-          const titleRight = details ? ` - ${details}` : "";
-
-          // ✅ KEEP DOCKET LINK LOGIC (unchanged)
           const docketUrl =
             p.ntsbCaseId
               ? `https://data.ntsb.gov/Docket/?NTSBNumber=${encodeURIComponent(String(p.ntsbCaseId).trim())}`
               : undefined;
 
-          // ✅ Report must be a DIRECT PDF link (no CAROL fallback)
-          const reportPdfUrl = buildDirectReportPdfUrl(p);
+          const searchUrl =
+            p.ntsbCaseId
+              ? `https://data.ntsb.gov/Docket/forms/Searchdocket?NTSBNumber=${encodeURIComponent(String(p.ntsbCaseId).trim())}`
+              : `https://data.ntsb.gov/Docket/forms/Searchdocket`;
 
           return (
             <CircleMarker
@@ -408,11 +333,14 @@ export default function MapView() {
                 fillOpacity: 0.9,
               }}
             >
-              {/* ✅ prevents map shifting/zooming when popup opens */}
               <Popup autoPan={false} closeOnClick={false}>
                 <div style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" }}>
                   <div style={{ fontWeight: 800, marginBottom: 6 }}>
-                    {p.kind === "fatal" ? `Fatal Accident${titleRight}` : p.kind === "accident" ? `Accident${titleRight}` : `Incident${titleRight}`}
+                    {p.kind === "fatal"
+                      ? `Fatal Accident${titleRight}`
+                      : p.kind === "accident"
+                      ? `Accident${titleRight}`
+                      : `Incident${titleRight}`}
                   </div>
 
                   <div style={{ fontSize: 13, marginBottom: 6 }}>
@@ -434,23 +362,21 @@ export default function MapView() {
                   </div>
 
                   {p.summary ? (
-                    <div style={{ fontSize: 12, opacity: 0.9, marginBottom: 8 }}>{shortNarrative(p.summary, 320)}</div>
+                    <div style={{ fontSize: 12, opacity: 0.9, marginBottom: 8 }}>
+                      {shortNarrative(p.summary, 320)}
+                    </div>
                   ) : null}
 
                   <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                    {reportPdfUrl ? (
-                      <a href={reportPdfUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>
-                        Report →
-                      </a>
-                    ) : (
-                      <span style={{ fontWeight: 800, opacity: 0.65 }}>Report: Not available</span>
-                    )}
-
                     {docketUrl ? (
                       <a href={docketUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>
-                        Docket →
+                        Open docket →
                       </a>
                     ) : null}
+
+                    <a href={searchUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>
+                      Search docket →
+                    </a>
                   </div>
                 </div>
               </Popup>
