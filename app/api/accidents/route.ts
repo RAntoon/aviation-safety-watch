@@ -166,72 +166,96 @@ async function getCoordsForRowViaKV(
   return result;
 }
 
-/* -------------------- Aircraft display helpers -------------------- */
+/** --------- NEW: aircraft helpers (tail + full make/model/series) --------- */
 
-function cleanToken(v: any): string {
-  if (v === null || v === undefined) return "";
-  const s = String(v).trim();
-  if (!s) return "";
-  const up = s.toUpperCase();
-  if (up === "N/A" || up === "NA" || up === "UNKNOWN" || up === "UNK" || up === "-") return "";
-  return s;
+function cleanStr(v: any): string {
+  return String(v ?? "").trim();
 }
 
-function normalizeTail(v: any): string {
-  const s = cleanToken(v);
-  if (!s) return "";
+function normalizeTail(raw: string): string | undefined {
+  const s = cleanStr(raw);
+  if (!s) return undefined;
+  // keep as-is but normalize whitespace and casing
+  // US N-numbers are usually uppercase; other countries vary but uppercase is fine
   return s.replace(/\s+/g, "").toUpperCase();
 }
 
+function pickFirstNonEmpty(obj: any, keys: string[]): string | undefined {
+  for (const k of keys) {
+    const v = obj?.[k];
+    if (v === null || v === undefined) continue;
+    const s = cleanStr(v);
+    if (s) return s;
+  }
+  return undefined;
+}
+
 /**
- * Combine make/model/series and tail into:
- *   "N123FR Cirrus SR22T"
- *   "Luscombe 8A"
+ * Tail numbers can appear under different field names depending on export shape.
+ * We check vehicle first (most reliable), then row-level fallbacks.
  */
-function buildAircraftDisplay(row: AnyRow, vehicle0: any): { aircraftType?: string; aircraftDisplay?: string; tailNumber?: string } {
-  // Tail candidates (depending on export structure)
-  const tail =
-    normalizeTail(
-      vehicle0?.registration ??
-        vehicle0?.reg ??
-        vehicle0?.tail ??
-        vehicle0?.tailNumber ??
-        vehicle0?.nNumber ??
-        vehicle0?.aircraftRegistration ??
-        row?.cm_registration ??
-        row?.cm_tailNumber ??
-        row?.cm_nNumber ??
-        row?.registration ??
-        row?.tailNumber
-    ) || "";
+function tailFor(row: AnyRow, vehicle0: any): string | undefined {
+  const vehicleTailRaw =
+    pickFirstNonEmpty(vehicle0, [
+      "registrationNumber",
+      "registration",
+      "tailNumber",
+      "tail_number",
+      "nNumber",
+      "n_number",
+      "aircraftRegistration",
+      "aircraftReg",
+      "aircraftRegNo",
+      "regNo",
+      "registrationNo",
+      "identification",
+      "ident",
+      "serialOrRegistration", // seen in some datasets
+    ]) ?? undefined;
 
-  // Make/model/series candidates
-  const make = cleanToken(vehicle0?.make ?? vehicle0?.manufacturer ?? row?.cm_make ?? row?.make);
-  const model = cleanToken(
-    vehicle0?.model ??
-      vehicle0?.modelName ??
-      row?.cm_model ??
-      row?.model ??
-      row?.aircraftType // last-resort fallback
-  );
-  const series = cleanToken(vehicle0?.series ?? vehicle0?.variant ?? row?.cm_series ?? row?.series);
+  const rowTailRaw =
+    pickFirstNonEmpty(row, [
+      "cm_registrationNumber",
+      "cm_tailNumber",
+      "cm_nNumber",
+      "cm_aircraftReg",
+      "cm_aircraftRegNo",
+      "cm_aircraftRegistration",
+      "cm_identification",
+      "aircraftRegistration",
+      "registrationNumber",
+      "tailNumber",
+    ]) ?? undefined;
 
-  // Handle "8" + "A" => "8A" (Luscombe 8A)
-  const modelPlusSeries =
-    model && series && /^[A-Za-z0-9]{1,4}$/.test(model) && /^[A-Za-z0-9]{1,4}$/.test(series)
-      ? `${model}${series}`
-      : model;
+  return normalizeTail(vehicleTailRaw ?? rowTailRaw ?? "");
+}
 
-  const makeModel = [make, modelPlusSeries].filter(Boolean).join(" ").trim();
+/**
+ * Build a full "Make Model Series" string.
+ * Your old code returned just model when present, which is why you saw "8".
+ */
+function fullAircraftType(vehicle0: any): string | undefined {
+  if (!vehicle0) return undefined;
 
-  // Back-compat “aircraftType” (what you used before)
-  const aircraftType = makeModel || undefined;
+  const make =
+    pickFirstNonEmpty(vehicle0, ["make", "manufacturer", "mfr", "aircraftMake"]) ?? "";
+  const model =
+    pickFirstNonEmpty(vehicle0, ["model", "aircraftModel", "modelName", "aircraftModelName"]) ?? "";
+  const series =
+    pickFirstNonEmpty(vehicle0, ["series", "modelSeries", "aircraftSeries", "variant"]) ?? "";
 
-  // New UI string
-  const aircraftDisplay =
-    tail && makeModel ? `${tail} ${makeModel}` : makeModel ? makeModel : tail ? tail : undefined;
+  // Join only distinct non-empty parts
+  const parts = [make, model, series].map((x) => cleanStr(x)).filter(Boolean);
 
-  return { aircraftType, aircraftDisplay, tailNumber: tail || undefined };
+  // De-dupe obvious repeats (e.g., "CIRRUS" repeated)
+  const deduped: string[] = [];
+  for (const p of parts) {
+    const up = p.toUpperCase();
+    if (!deduped.some((d) => d.toUpperCase() === up)) deduped.push(p);
+  }
+
+  const out = deduped.join(" ").replace(/\s+/g, " ").trim();
+  return out ? out : undefined;
 }
 
 export async function GET(req: Request) {
@@ -251,7 +275,6 @@ export async function GET(req: Request) {
   const blobManifestPath = path.join(dataDir, "blob-manifest.json");
   const localManifestPath = path.join(dataDir, "manifest.json");
 
-  // cap new geocodes per request (prevents timeouts + rate limit issues)
   const geocodeBudget = { remaining: 25 };
   const geocodeStats = { cacheHits: 0, geocoded: 0 };
 
@@ -311,12 +334,10 @@ export async function GET(req: Request) {
         if (inRange) rowsInRange++;
         if (!inRange) continue;
 
-        // coords priority, but null/"" is missing (NOT zero)
         let lat = toNumberOrNaN(row?.cm_Latitude);
         let lng = toNumberOrNaN(row?.cm_Longitude);
         let hasCoords = Number.isFinite(lat) && Number.isFinite(lng);
 
-        // Fallback: city/state/country via KV-cached geocode (ONLY if missing coords)
         if (!hasCoords) {
           const fallback = await getCoordsForRowViaKV(row, geocodeBudget, geocodeStats);
           if (fallback) {
@@ -333,7 +354,9 @@ export async function GET(req: Request) {
 
         const vehicle0 = Array.isArray(row?.cm_vehicles) ? row.cm_vehicles[0] : undefined;
 
-        const { aircraftType, aircraftDisplay, tailNumber } = buildAircraftDisplay(row, vehicle0);
+        const aircraftType = fullAircraftType(vehicle0);
+
+        const tailNumber = tailFor(row, vehicle0);
 
         const narrative =
           row?.prelimNarrative ??
@@ -357,13 +380,8 @@ export async function GET(req: Request) {
             ? `https://data.ntsb.gov/Docket/?NTSBNumber=${encodeURIComponent(ntsbNum)}`
             : undefined,
 
-          // Back-compat (old)
-          aircraftType,
-
-          // New (use this in popup title)
-          aircraftDisplay,
-          tailNumber,
-
+          tailNumber,      // ✅ NEW
+          aircraftType,    // ✅ Now “Make Model Series”, not “8”
           summary: narrative ? String(narrative).slice(0, 240) : undefined,
         });
       }
@@ -389,7 +407,7 @@ export async function GET(req: Request) {
     });
   }
 
-  // ----- Local mode -----
+  // ----- Local mode (kept, but also outputs tail + full type) -----
   if (!fs.existsSync(localManifestPath)) {
     return NextResponse.json(
       {
@@ -461,7 +479,8 @@ export async function GET(req: Request) {
 
       const vehicle0 = Array.isArray(row?.cm_vehicles) ? row.cm_vehicles[0] : undefined;
 
-      const { aircraftType, aircraftDisplay, tailNumber } = buildAircraftDisplay(row, vehicle0);
+      const aircraftType = fullAircraftType(vehicle0);
+      const tailNumber = tailFor(row, vehicle0);
 
       const narrative =
         row?.prelimNarrative ??
@@ -485,10 +504,8 @@ export async function GET(req: Request) {
           ? `https://data.ntsb.gov/Docket/?NTSBNumber=${encodeURIComponent(ntsbNum)}`
           : undefined,
 
-        aircraftType,
-        aircraftDisplay,
-        tailNumber,
-
+        tailNumber,      // ✅ NEW
+        aircraftType,    // ✅ full make/model/series
         summary: narrative ? String(narrative).slice(0, 240) : undefined,
       });
     }
