@@ -251,7 +251,7 @@ export default function MapView() {
               type="date"
               value={end}
               onChange={(e) => setEnd(e.target.value)}
-              style={{ width: "100%", padding: 8, borderRadius: 8, border: "1px solid #ddd", marginRight: 8, }}
+              style={{ width: "100%", padding: 8, borderRadius: 8, border: "1px solid #ddd", marginRight: 8 }}
             />
           </div>
         </div>
