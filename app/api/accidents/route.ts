@@ -205,10 +205,10 @@ export async function GET(req: Request) {
   const startStr = searchParams.get("start") ?? "";
   const endStr = searchParams.get("end") ?? "";
 
-  const cacheKey = `accidents:v1:${startStr}:${endStr}`;
+  const cacheKey = `accidents:v2:${startStr}:${endStr}`;
 
   // 🔥 RESPONSE CACHE HIT
-  const cacheKey = `accidents:v2:${startStr}:${endStr}`;
+  const cached = await kvGet<any>(cacheKey);
   if (cached) {
     return NextResponse.json({ ...cached, cached: true });
   }
