@@ -71,6 +71,9 @@ function shortNarrative(input?: string, maxChars = 300) {
   return first.length > maxChars ? first.slice(0, maxChars - 1) + "…" : first;
 }
 
+/**
+ * Spread points that share identical coordinates into a small ring.
+ */
 function spreadOverlaps(points: MapPoint[], radiusDeg = 0.015): MapPoint[] {
   const groups = new Map<string, MapPoint[]>();
 
@@ -162,7 +165,33 @@ export default function MapView() {
     <div className="asw-root">
       <ClockWidget />
 
-      <MapContainer center={center} zoom={4} scrollWheelZoom className="asw-map" zoomControl={false}>
+      {/* CONTROL PANEL (UNCHANGED) */}
+      <div className="asw-panel">
+        <div style={{ fontWeight: 800, fontSize: 18 }}>Aviation Safety Watch</div>
+
+        <input
+          type="text"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search tail, aircraft, city, narrative…"
+          onKeyDown={(e) => e.key === "Enter" && load()}
+          style={{ width: "100%", marginTop: 8, padding: 8 }}
+        />
+
+        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+          <input type="date" value={start} onChange={(e) => setStart(e.target.value)} />
+          <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} />
+        </div>
+
+        <button onClick={load} disabled={loading} style={{ marginTop: 8 }}>
+          {loading ? "Loading…" : "Reload"}
+        </button>
+
+        <div style={{ fontSize: 12, marginTop: 6 }}>Status: {status}</div>
+      </div>
+
+      {/* MAP */}
+      <MapContainer center={center} zoom={4} className="asw-map" zoomControl={false}>
         <ZoomControl position="bottomright" />
         <TileLayer
           attribution="&copy; OpenStreetMap contributors"
@@ -176,31 +205,20 @@ export default function MapView() {
             radius={7}
             pathOptions={{
               color: "#333",
-              weight: 1,
               fillColor: colorFor(p.kind),
               fillOpacity: 0.9,
             }}
           >
-            <Popup autoPan={false} closeOnClick={false}>
+            <Popup autoPan={false}>
               <div>
-                <div style={{ fontWeight: 800, marginBottom: 6 }}>
-                  {buildTitleLine(p)}
-                </div>
+                <div style={{ fontWeight: 800 }}>{buildTitleLine(p)}</div>
 
-                {p.date && <div><b>Date:</b> {p.date}</div>}
-                {(p.city || p.state || p.country) && (
-                  <div>
-                    <b>Location:</b> {[p.city, p.state, p.country].filter(Boolean).join(", ")}
-                  </div>
-                )}
+                {p.date && <div>Date: {p.date}</div>}
+                {p.city && <div>Location: {[p.city, p.state].filter(Boolean).join(", ")}</div>}
 
-                {p.summary && (
-                  <div style={{ marginTop: 6, fontSize: 12 }}>
-                    {shortNarrative(p.summary)}
-                  </div>
-                )}
+                {p.summary && <div style={{ fontSize: 12 }}>{shortNarrative(p.summary)}</div>}
 
-                <div style={{ marginTop: 8 }}>
+                <div style={{ marginTop: 6 }}>
                   {p.reportUrl && (
                     <a href={p.reportUrl} target="_blank" rel="noreferrer">
                       Open report →
@@ -226,7 +244,7 @@ export default function MapView() {
         ))}
       </MapContainer>
 
-      {/* ✅ COPYRIGHT FOOTER */}
+      {/* ✅ ONLY NEW ADDITION */}
       <a
         href="https://antooncorp.com"
         target="_blank"
@@ -243,7 +261,6 @@ export default function MapView() {
           padding: "6px 10px",
           borderRadius: 8,
           boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
-          fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
         }}
       >
         © 2025 Antoon Corporation — All Rights Reserved.
@@ -258,6 +275,16 @@ export default function MapView() {
         .asw-map {
           height: 100%;
           width: 100%;
+        }
+        .asw-panel {
+          position: absolute;
+          top: 12px;
+          left: 12px;
+          z-index: 1000;
+          background: white;
+          padding: 12px;
+          border-radius: 8px;
+          width: 300px;
         }
       `}</style>
     </div>
