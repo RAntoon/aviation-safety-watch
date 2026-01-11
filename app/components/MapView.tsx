@@ -475,7 +475,6 @@ export default function MapView() {
           }
         }
       `}</style>
-            </style>
 
       {/* Copyright */}
       <a
