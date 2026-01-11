@@ -475,6 +475,29 @@ export default function MapView() {
           }
         }
       `}</style>
+            </style>
+
+      {/* Copyright */}
+      <a
+        href="https://www.antooncorp.com"
+        target="_blank"
+        rel="noreferrer"
+        style={{
+          position: "absolute",
+          bottom: 10,
+          left: 12,
+          fontSize: 11,
+          color: "#555",
+          textDecoration: "none",
+          zIndex: 1000,
+        }}
+      >
+        Copyright © 2025 Antoon Corporation – All Rights Reserved.
+      </a>
+
+    </div>
+  );
+}
     </div>
   );
 }
