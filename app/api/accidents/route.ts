@@ -77,14 +77,6 @@ async function fetchJsonArray(url: string): Promise<AnyRow[]> {
 
 /**
  * ---------- KV-backed Geocoding (no extra local database file) ----------
- * Uses your Vercel KV REST env vars (already in .env.local).
- * We only geocode when:
- *  - row has NO valid lat/lng (coords always take priority)
- *  - row has at least city+state (or city+country)
- *
- * We cache results in KV so future requests are instant.
- *
- * IMPORTANT: To avoid rate limits, we cap how many new geocodes we do per request.
  */
 const KV_URL = process.env.KV_REST_API_URL || "";
 const KV_TOKEN = process.env.KV_REST_API_TOKEN || "";
@@ -99,7 +91,6 @@ async function kvGetJson<T>(key: string): Promise<T | null> {
   });
   if (!res.ok) return null;
   const data = await res.json();
-  // Upstash returns { result: "<string>" | null }
   const raw = data?.result;
   if (!raw) return null;
   try {
@@ -112,7 +103,6 @@ async function kvGetJson<T>(key: string): Promise<T | null> {
 async function kvSetJson(key: string, value: any): Promise<void> {
   if (!KV_ENABLED) return;
   const payload = JSON.stringify(value);
-  // Upstash REST: /set/<key>/<value>
   const url = `${KV_URL}/set/${encodeURIComponent(key)}/${encodeURIComponent(payload)}`;
   await fetch(url, {
     headers: { Authorization: `Bearer ${KV_TOKEN}` },
@@ -123,7 +113,6 @@ async function kvSetJson(key: string, value: any): Promise<void> {
 type LatLng = { lat: number; lng: number };
 
 async function geocodeWithNominatim(query: string): Promise<LatLng | null> {
-  // Nominatim requires a User-Agent; keep it stable.
   const url =
     `https://nominatim.openstreetmap.org/search?` +
     `format=json&limit=1&addressdetails=0&q=${encodeURIComponent(query)}`;
@@ -148,21 +137,23 @@ async function geocodeWithNominatim(query: string): Promise<LatLng | null> {
   return { lat, lng };
 }
 
-async function getCoordsForRowViaKV(row: AnyRow, geocodeBudget: { remaining: number }, stats: { cacheHits: number; geocoded: number; }): Promise<LatLng | null> {
+async function getCoordsForRowViaKV(
+  row: AnyRow,
+  geocodeBudget: { remaining: number },
+  stats: { cacheHits: number; geocoded: number }
+): Promise<LatLng | null> {
   const key = locationKey(row);
   const label = locationLabel(row);
   if (!key || !label) return null;
 
   const cacheKey = `geo:${key}`;
 
-  // 1) Cache lookup
   const cached = await kvGetJson<LatLng>(cacheKey);
   if (cached && Number.isFinite(cached.lat) && Number.isFinite(cached.lng)) {
     stats.cacheHits += 1;
     return cached;
   }
 
-  // 2) No cache: only geocode if we still have budget
   if (geocodeBudget.remaining <= 0) return null;
   geocodeBudget.remaining -= 1;
 
@@ -170,10 +161,77 @@ async function getCoordsForRowViaKV(row: AnyRow, geocodeBudget: { remaining: num
   if (!result) return null;
 
   stats.geocoded += 1;
-  // save to KV for future requests
   await kvSetJson(cacheKey, result);
 
   return result;
+}
+
+/* -------------------- Aircraft display helpers -------------------- */
+
+function cleanToken(v: any): string {
+  if (v === null || v === undefined) return "";
+  const s = String(v).trim();
+  if (!s) return "";
+  const up = s.toUpperCase();
+  if (up === "N/A" || up === "NA" || up === "UNKNOWN" || up === "UNK" || up === "-") return "";
+  return s;
+}
+
+function normalizeTail(v: any): string {
+  const s = cleanToken(v);
+  if (!s) return "";
+  return s.replace(/\s+/g, "").toUpperCase();
+}
+
+/**
+ * Combine make/model/series and tail into:
+ *   "N123FR Cirrus SR22T"
+ *   "Luscombe 8A"
+ */
+function buildAircraftDisplay(row: AnyRow, vehicle0: any): { aircraftType?: string; aircraftDisplay?: string; tailNumber?: string } {
+  // Tail candidates (depending on export structure)
+  const tail =
+    normalizeTail(
+      vehicle0?.registration ??
+        vehicle0?.reg ??
+        vehicle0?.tail ??
+        vehicle0?.tailNumber ??
+        vehicle0?.nNumber ??
+        vehicle0?.aircraftRegistration ??
+        row?.cm_registration ??
+        row?.cm_tailNumber ??
+        row?.cm_nNumber ??
+        row?.registration ??
+        row?.tailNumber
+    ) || "";
+
+  // Make/model/series candidates
+  const make = cleanToken(vehicle0?.make ?? vehicle0?.manufacturer ?? row?.cm_make ?? row?.make);
+  const model = cleanToken(
+    vehicle0?.model ??
+      vehicle0?.modelName ??
+      row?.cm_model ??
+      row?.model ??
+      row?.aircraftType // last-resort fallback
+  );
+  const series = cleanToken(vehicle0?.series ?? vehicle0?.variant ?? row?.cm_series ?? row?.series);
+
+  // Handle "8" + "A" => "8A" (Luscombe 8A)
+  const modelPlusSeries =
+    model && series && /^[A-Za-z0-9]{1,4}$/.test(model) && /^[A-Za-z0-9]{1,4}$/.test(series)
+      ? `${model}${series}`
+      : model;
+
+  const makeModel = [make, modelPlusSeries].filter(Boolean).join(" ").trim();
+
+  // Back-compat “aircraftType” (what you used before)
+  const aircraftType = makeModel || undefined;
+
+  // New UI string
+  const aircraftDisplay =
+    tail && makeModel ? `${tail} ${makeModel}` : makeModel ? makeModel : tail ? tail : undefined;
+
+  return { aircraftType, aircraftDisplay, tailNumber: tail || undefined };
 }
 
 export async function GET(req: Request) {
@@ -275,12 +333,7 @@ export async function GET(req: Request) {
 
         const vehicle0 = Array.isArray(row?.cm_vehicles) ? row.cm_vehicles[0] : undefined;
 
-        const aircraftType =
-          vehicle0?.model
-            ? String(vehicle0.model).trim()
-            : vehicle0?.make && vehicle0?.model
-            ? `${vehicle0.make} ${vehicle0.model}`
-            : undefined;
+        const { aircraftType, aircraftDisplay, tailNumber } = buildAircraftDisplay(row, vehicle0);
 
         const narrative =
           row?.prelimNarrative ??
@@ -304,7 +357,13 @@ export async function GET(req: Request) {
             ? `https://data.ntsb.gov/Docket/?NTSBNumber=${encodeURIComponent(ntsbNum)}`
             : undefined,
 
+          // Back-compat (old)
           aircraftType,
+
+          // New (use this in popup title)
+          aircraftDisplay,
+          tailNumber,
+
           summary: narrative ? String(narrative).slice(0, 240) : undefined,
         });
       }
@@ -330,7 +389,7 @@ export async function GET(req: Request) {
     });
   }
 
-  // ----- Local mode (unchanged behavior, but uses KV geocode fallback too) -----
+  // ----- Local mode -----
   if (!fs.existsSync(localManifestPath)) {
     return NextResponse.json(
       {
@@ -402,12 +461,7 @@ export async function GET(req: Request) {
 
       const vehicle0 = Array.isArray(row?.cm_vehicles) ? row.cm_vehicles[0] : undefined;
 
-      const aircraftType =
-        vehicle0?.model
-          ? String(vehicle0.model).trim()
-          : vehicle0?.make && vehicle0?.model
-          ? `${vehicle0.make} ${vehicle0.model}`
-          : undefined;
+      const { aircraftType, aircraftDisplay, tailNumber } = buildAircraftDisplay(row, vehicle0);
 
       const narrative =
         row?.prelimNarrative ??
@@ -432,6 +486,9 @@ export async function GET(req: Request) {
           : undefined,
 
         aircraftType,
+        aircraftDisplay,
+        tailNumber,
+
         summary: narrative ? String(narrative).slice(0, 240) : undefined,
       });
     }
