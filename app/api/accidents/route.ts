@@ -52,9 +52,8 @@ function locationKey(row: AnyRow): string | null {
   const city = row?.cm_city ? String(row.cm_city).trim() : "";
   const state = row?.cm_state ? String(row.cm_state).trim() : "";
   const country = row?.cm_country ? String(row.cm_country).trim() : "";
-
   const parts = [city, state, country].filter(Boolean);
-  if (parts.length < 2) return null; // need at least city+state (or city+country)
+  if (parts.length < 2) return null;
   return parts.join(", ").toLowerCase();
 }
 
@@ -76,7 +75,7 @@ async function fetchJsonArray(url: string): Promise<AnyRow[]> {
 }
 
 /**
- * ---------- KV-backed Geocoding (no extra local database file) ----------
+ * ---------- KV-backed Geocoding ----------
  */
 const KV_URL = process.env.KV_REST_API_URL || "";
 const KV_TOKEN = process.env.KV_REST_API_TOKEN || "";
@@ -162,107 +161,166 @@ async function getCoordsForRowViaKV(
 
   stats.geocoded += 1;
   await kvSetJson(cacheKey, result);
-
   return result;
 }
 
-/** --------- NEW: aircraft helpers (tail + full make/model/series) --------- */
-
-function cleanStr(v: any): string {
-  return String(v ?? "").trim();
-}
-
-function normalizeTail(raw: string): string | undefined {
-  const s = cleanStr(raw);
-  if (!s) return undefined;
-  // keep as-is but normalize whitespace and casing
-  // US N-numbers are usually uppercase; other countries vary but uppercase is fine
-  return s.replace(/\s+/g, "").toUpperCase();
-}
-
-function pickFirstNonEmpty(obj: any, keys: string[]): string | undefined {
-  for (const k of keys) {
-    const v = obj?.[k];
-    if (v === null || v === undefined) continue;
-    const s = cleanStr(v);
-    if (s) return s;
-  }
-  return undefined;
-}
-
 /**
- * Tail numbers can appear under different field names depending on export shape.
- * We check vehicle first (most reliable), then row-level fallbacks.
+ * ---------- Aircraft helpers ----------
  */
-function tailFor(row: AnyRow, vehicle0: any): string | undefined {
-  const vehicleTailRaw =
-    pickFirstNonEmpty(vehicle0, [
-      "registrationNumber",
-      "registration",
-      "tailNumber",
-      "tail_number",
-      "nNumber",
-      "n_number",
-      "aircraftRegistration",
-      "aircraftReg",
-      "aircraftRegNo",
-      "regNo",
-      "registrationNo",
-      "identification",
-      "ident",
-      "serialOrRegistration", // seen in some datasets
-    ]) ?? undefined;
 
-  const rowTailRaw =
-    pickFirstNonEmpty(row, [
-      "cm_registrationNumber",
-      "cm_tailNumber",
-      "cm_nNumber",
-      "cm_aircraftReg",
-      "cm_aircraftRegNo",
-      "cm_aircraftRegistration",
-      "cm_identification",
-      "aircraftRegistration",
-      "registrationNumber",
-      "tailNumber",
-    ]) ?? undefined;
-
-  return normalizeTail(vehicleTailRaw ?? rowTailRaw ?? "");
+function cleanText(v: any): string {
+  if (v === null || v === undefined) return "";
+  return String(v).replace(/\s+/g, " ").trim();
 }
 
-/**
- * Build a full "Make Model Series" string.
- * Your old code returned just model when present, which is why you saw "8".
- */
-function fullAircraftType(vehicle0: any): string | undefined {
-  if (!vehicle0) return undefined;
+function buildAircraftType(row: AnyRow): string | undefined {
+  const vehicle0 = Array.isArray(row?.cm_vehicles) ? row.cm_vehicles[0] : undefined;
 
   const make =
-    pickFirstNonEmpty(vehicle0, ["make", "manufacturer", "mfr", "aircraftMake"]) ?? "";
+    cleanText(vehicle0?.make) ||
+    cleanText(vehicle0?.manufacturer) ||
+    cleanText(vehicle0?.makeName) ||
+    cleanText(row?.cm_make) ||
+    "";
+
+  // Try a bunch of common model fields; some feeds have “8” vs “8A” in different keys.
   const model =
-    pickFirstNonEmpty(vehicle0, ["model", "aircraftModel", "modelName", "aircraftModelName"]) ?? "";
-  const series =
-    pickFirstNonEmpty(vehicle0, ["series", "modelSeries", "aircraftSeries", "variant"]) ?? "";
+    cleanText(vehicle0?.model) ||
+    cleanText(vehicle0?.modelNumber) ||
+    cleanText(vehicle0?.modelName) ||
+    cleanText(vehicle0?.aircraftModel) ||
+    cleanText(vehicle0?.aircraftModelName) ||
+    cleanText(row?.cm_model) ||
+    cleanText(row?.cm_aircraftModel) ||
+    cleanText(row?.cm_aircraftModelName) ||
+    "";
 
-  // Join only distinct non-empty parts
-  const parts = [make, model, series].map((x) => cleanStr(x)).filter(Boolean);
+  const series = cleanText(vehicle0?.series) || cleanText(vehicle0?.seriesName) || "";
 
-  // De-dupe obvious repeats (e.g., "CIRRUS" repeated)
-  const deduped: string[] = [];
-  for (const p of parts) {
-    const up = p.toUpperCase();
-    if (!deduped.some((d) => d.toUpperCase() === up)) deduped.push(p);
+  // Compose “Make Model Series” but avoid duplicates.
+  const parts = [make, model, series].filter(Boolean);
+  if (parts.length === 0) return undefined;
+
+  // If model already includes make (rare), don’t double it.
+  const joined = parts.join(" ").replace(/\s+/g, " ").trim();
+  return joined || undefined;
+}
+
+function buildTailNumber(row: AnyRow): string | undefined {
+  const vehicle0 = Array.isArray(row?.cm_vehicles) ? row.cm_vehicles[0] : undefined;
+
+  const tail =
+    cleanText(vehicle0?.registrationNumber) ||
+    cleanText(vehicle0?.registration) ||
+    cleanText(vehicle0?.nNumber) ||
+    cleanText(vehicle0?.tailNumber) ||
+    cleanText(row?.cm_registrationNumber) ||
+    cleanText(row?.cm_tailNumber) ||
+    cleanText(row?.cm_nNumber) ||
+    "";
+
+  return tail || undefined;
+}
+
+/**
+ * Direct PDF report link (NOT CAROL).
+ * We look for report IDs like AAR1001, HAR2301, etc.
+ */
+function buildReportUrl(row: AnyRow): string | undefined {
+  // If your data already contains a direct PDF URL, honor it.
+  const direct =
+    cleanText(row?.cm_reportPdfUrl) ||
+    cleanText(row?.cm_reportUrl) ||
+    cleanText(row?.reportPdfUrl) ||
+    cleanText(row?.reportUrl) ||
+    "";
+
+  if (direct && /^https?:\/\//i.test(direct) && /\.pdf(\?|$)/i.test(direct)) {
+    return direct;
   }
 
-  const out = deduped.join(" ").replace(/\s+/g, " ").trim();
-  return out ? out : undefined;
+  // Otherwise, try extracting a report ID.
+  const idCandidates = [
+    row?.cm_reportId,
+    row?.cm_reportNumber,
+    row?.cm_reportNo,
+    row?.reportId,
+    row?.reportNumber,
+    row?.reportNo,
+    row?.cm_publicationId,
+  ].map(cleanText);
+
+  let id = idCandidates.find(Boolean) || "";
+
+  // Some feeds stash report references in text fields; try to pull patterns like AAR1001.
+  if (!id) {
+    const hay = [
+      row?.prelimNarrative,
+      row?.factualNarrative,
+      row?.analysisNarrative,
+      row?.cm_summary,
+      row?.cm_eventDescription,
+    ]
+      .map(cleanText)
+      .filter(Boolean)
+      .join(" ");
+
+    const m = hay.match(/\b([A-Z]{2,5}\d{3,6})\b/);
+    if (m?.[1]) id = m[1];
+  }
+
+  id = cleanText(id).toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!id) return undefined;
+
+  // Direct PDF path pattern
+  return `https://www.ntsb.gov/investigations/AccidentReports/Reports/${encodeURIComponent(id)}.pdf`;
+}
+
+/**
+ * ---------- Search helper ----------
+ * q supports multiple terms; all terms must match somewhere in the row summary-ish text.
+ */
+function matchesQuery(row: AnyRow, derived: { tail?: string; aircraftType?: string }, qRaw?: string | null): boolean {
+  const q = (qRaw || "").trim();
+  if (!q) return true;
+
+  const terms = q
+    .toLowerCase()
+    .split(/\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  if (terms.length === 0) return true;
+
+  const narrative =
+    row?.prelimNarrative ??
+    row?.factualNarrative ??
+    row?.analysisNarrative ??
+    row?.cm_summary ??
+    "";
+
+  const hay = [
+    row?.cm_ntsbNum,
+    row?.cm_city,
+    row?.cm_state,
+    row?.cm_country,
+    row?.cm_eventDate,
+    derived.tail,
+    derived.aircraftType,
+    narrative,
+  ]
+    .map((v) => cleanText(v).toLowerCase())
+    .filter(Boolean)
+    .join(" | ");
+
+  return terms.every((t) => hay.includes(t));
 }
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const startStr = searchParams.get("start");
   const endStr = searchParams.get("end");
-  const q = searchParams.get("q"); // kept for future search use; unused here
+  const q = searchParams.get("q");
 
   const startT = startStr ? Date.parse(startStr) : NaN;
   const endT = endStr ? Date.parse(endStr) : NaN;
@@ -296,6 +354,8 @@ export async function GET(req: Request) {
     let totalRows = 0;
     let rowsWithCoords = 0;
     let rowsInRange = 0;
+    let rowsMatchedQuery = 0;
+
     const points: any[] = [];
     const blocksLoaded: string[] = [];
 
@@ -334,10 +394,12 @@ export async function GET(req: Request) {
         if (inRange) rowsInRange++;
         if (!inRange) continue;
 
+        // coords priority, but null/"" is missing (NOT zero)
         let lat = toNumberOrNaN(row?.cm_Latitude);
         let lng = toNumberOrNaN(row?.cm_Longitude);
         let hasCoords = Number.isFinite(lat) && Number.isFinite(lng);
 
+        // Fallback geocode if missing coords
         if (!hasCoords) {
           const fallback = await getCoordsForRowViaKV(row, geocodeBudget, geocodeStats);
           if (fallback) {
@@ -352,11 +414,12 @@ export async function GET(req: Request) {
 
         const ntsbNum = row?.cm_ntsbNum ? String(row.cm_ntsbNum) : undefined;
 
-        const vehicle0 = Array.isArray(row?.cm_vehicles) ? row.cm_vehicles[0] : undefined;
+        const aircraftType = buildAircraftType(row);
+        const tailNumber = buildTailNumber(row);
 
-        const aircraftType = fullAircraftType(vehicle0);
-
-        const tailNumber = tailFor(row, vehicle0);
+        // search filter
+        if (!matchesQuery(row, { tail: tailNumber, aircraftType }, q)) continue;
+        rowsMatchedQuery += 1;
 
         const narrative =
           row?.prelimNarrative ??
@@ -376,12 +439,18 @@ export async function GET(req: Request) {
           country: row?.cm_country ?? undefined,
 
           ntsbCaseId: ntsbNum,
+
+          // Docket link (keep your working behavior)
           docketUrl: ntsbNum
             ? `https://data.ntsb.gov/Docket/?NTSBNumber=${encodeURIComponent(ntsbNum)}`
             : undefined,
 
-          tailNumber,      // ✅ NEW
-          aircraftType,    // ✅ Now “Make Model Series”, not “8”
+          // Direct PDF report link (not CAROL)
+          reportUrl: buildReportUrl(row),
+
+          tailNumber,
+          aircraftType,
+
           summary: narrative ? String(narrative).slice(0, 240) : undefined,
         });
       }
@@ -392,6 +461,7 @@ export async function GET(req: Request) {
       totalRows,
       rowsWithCoords,
       rowsInRange,
+      rowsMatchedQuery,
       points,
       debug: {
         useBlob,
@@ -407,7 +477,7 @@ export async function GET(req: Request) {
     });
   }
 
-  // ----- Local mode (kept, but also outputs tail + full type) -----
+  // ----- Local mode fallback (kept, just in case) -----
   if (!fs.existsSync(localManifestPath)) {
     return NextResponse.json(
       {
@@ -425,6 +495,8 @@ export async function GET(req: Request) {
   let totalRows = 0;
   let rowsWithCoords = 0;
   let rowsInRange = 0;
+  let rowsMatchedQuery = 0;
+
   const points: any[] = [];
 
   for (const block of manifest) {
@@ -477,10 +549,11 @@ export async function GET(req: Request) {
 
       const ntsbNum = row?.cm_ntsbNum ? String(row.cm_ntsbNum) : undefined;
 
-      const vehicle0 = Array.isArray(row?.cm_vehicles) ? row.cm_vehicles[0] : undefined;
+      const aircraftType = buildAircraftType(row);
+      const tailNumber = buildTailNumber(row);
 
-      const aircraftType = fullAircraftType(vehicle0);
-      const tailNumber = tailFor(row, vehicle0);
+      if (!matchesQuery(row, { tail: tailNumber, aircraftType }, q)) continue;
+      rowsMatchedQuery += 1;
 
       const narrative =
         row?.prelimNarrative ??
@@ -504,8 +577,11 @@ export async function GET(req: Request) {
           ? `https://data.ntsb.gov/Docket/?NTSBNumber=${encodeURIComponent(ntsbNum)}`
           : undefined,
 
-        tailNumber,      // ✅ NEW
-        aircraftType,    // ✅ full make/model/series
+        reportUrl: buildReportUrl(row),
+
+        tailNumber,
+        aircraftType,
+
         summary: narrative ? String(narrative).slice(0, 240) : undefined,
       });
     }
@@ -516,6 +592,7 @@ export async function GET(req: Request) {
     totalRows,
     rowsWithCoords,
     rowsInRange,
+    rowsMatchedQuery,
     points,
     debug: {
       useBlob,
