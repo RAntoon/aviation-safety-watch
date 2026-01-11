@@ -208,7 +208,7 @@ export async function GET(req: Request) {
   const cacheKey = `accidents:v1:${startStr}:${endStr}`;
 
   // 🔥 RESPONSE CACHE HIT
-  const cached = await kvGet<any>(cacheKey);
+  const cacheKey = `accidents:v2:${startStr}:${endStr}`;
   if (cached) {
     return NextResponse.json({ ...cached, cached: true });
   }
