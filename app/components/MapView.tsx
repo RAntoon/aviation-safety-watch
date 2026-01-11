@@ -436,7 +436,7 @@ export default function MapView() {
         })}
       </MapContainer>
 
-      {/* Mobile + layout styling */}
+         {/* Mobile + layout styling */}
       <style jsx global>{`
         .asw-root {
           height: 100dvh;
@@ -478,7 +478,7 @@ export default function MapView() {
 
       {/* Copyright */}
       <a
-        href="https://www.antooncorp.com"
+        href="https://antooncorp.com"
         target="_blank"
         rel="noreferrer"
         style={{
@@ -493,10 +493,6 @@ export default function MapView() {
       >
         Copyright © 2025 Antoon Corporation – All Rights Reserved.
       </a>
-
-    </div>
-  );
-}
     </div>
   );
 }
