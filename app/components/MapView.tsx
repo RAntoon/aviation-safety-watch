@@ -217,7 +217,7 @@ export default function MapView() {
           Data source: NTSB exports · Default range: last 12 months
         </div>
 
-        {/* Search */}
+        {/*
         <div style={{ marginBottom: 10 }}>
           <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Search</div>
           <input
@@ -234,7 +234,7 @@ export default function MapView() {
             Tip: multiple words are supported (all terms must match).
           </div>
         </div>
-
+        */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
           <div>
             <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Start</div>
