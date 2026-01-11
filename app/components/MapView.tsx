@@ -235,7 +235,7 @@ export default function MapView() {
           </div>
         </div>
         */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", columnGap 12, rowGap: 10, }}>
           <div>
             <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Start</div>
             <input
@@ -251,7 +251,7 @@ export default function MapView() {
               type="date"
               value={end}
               onChange={(e) => setEnd(e.target.value)}
-              style={{ width: "100%", padding: 8, borderRadius: 8, border: "1px solid #ddd", marginRight: 20 }}
+              style={{ width: "100%", padding: 8, borderRadius: 8, border: "1px solid #bbb", marginRight: 8 }}
             />
           </div>
         </div>
