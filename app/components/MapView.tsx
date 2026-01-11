@@ -130,13 +130,14 @@ export default function MapView() {
   const [q, setQ] = useState<string>("");
 
   const [points, setPoints] = useState<MapPoint[]>([]);
-  const [status, setStatus] = useState("Idle");
-  const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState<string>("Idle");
+  const [loading, setLoading] = useState<boolean>(false);
 
   const center: LatLngExpression = useMemo(() => [39.5, -98.35], []);
 
   async function load() {
     setLoading(true);
+    setStatus("Loading…");
     try {
       const url =
         `/api/accidents?start=${encodeURIComponent(start)}` +
@@ -145,12 +146,16 @@ export default function MapView() {
 
       const res = await fetch(url, { cache: "no-store" });
       const json = await res.json();
-      const raw = Array.isArray(json?.points) ? json.points : [];
-      setPoints(spreadOverlaps(raw));
-      setStatus(`Loaded ${raw.length} events`);
-    } catch {
+
+      const raw: MapPoint[] = Array.isArray(json?.points) ? json.points : [];
+      const spread = spreadOverlaps(raw);
+
+      setPoints(spread);
+      setStatus(`OK. Loaded ${spread.length} points.`);
+    } catch (e) {
       setPoints([]);
-      setStatus("Load failed");
+      setStatus("Fetch failed.");
+      console.error(e);
     } finally {
       setLoading(false);
     }
@@ -165,34 +170,38 @@ export default function MapView() {
     <div className="asw-root">
       <ClockWidget />
 
-      {/* CONTROL PANEL (UNCHANGED) */}
+      {/* CONTROL PANEL */}
       <div className="asw-panel">
-        <div style={{ fontWeight: 800, fontSize: 18 }}>Aviation Safety Watch</div>
+        <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 6 }}>
+          Aviation Safety Watch
+        </div>
 
+        {/* SEARCH */}
         <input
           type="text"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Search tail, aircraft, city, narrative…"
+          placeholder="Search tail, make/model, city, narrative…"
           onKeyDown={(e) => e.key === "Enter" && load()}
-          style={{ width: "100%", marginTop: 8, padding: 8 }}
+          style={{ width: "100%", padding: 8, marginBottom: 10 }}
         />
 
-        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
           <input type="date" value={start} onChange={(e) => setStart(e.target.value)} />
           <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} />
         </div>
 
-        <button onClick={load} disabled={loading} style={{ marginTop: 8 }}>
+        <button onClick={load} disabled={loading} style={{ marginTop: 10 }}>
           {loading ? "Loading…" : "Reload"}
         </button>
 
-        <div style={{ fontSize: 12, marginTop: 6 }}>Status: {status}</div>
+        <div style={{ fontSize: 12, marginTop: 8 }}>Status: {status}</div>
       </div>
 
       {/* MAP */}
       <MapContainer center={center} zoom={4} className="asw-map" zoomControl={false}>
         <ZoomControl position="bottomright" />
+
         <TileLayer
           attribution="&copy; OpenStreetMap contributors"
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -209,62 +218,53 @@ export default function MapView() {
               fillOpacity: 0.9,
             }}
           >
-            <Popup autoPan={false}>
+            <Popup autoPan={false} closeOnClick={false}>
               <div>
-                <div style={{ fontWeight: 800 }}>{buildTitleLine(p)}</div>
+                <div style={{ fontWeight: 800, marginBottom: 6 }}>
+                  {buildTitleLine(p)}
+                </div>
 
                 {p.date && <div>Date: {p.date}</div>}
-                {p.city && <div>Location: {[p.city, p.state].filter(Boolean).join(", ")}</div>}
+                {(p.city || p.state || p.country) && (
+                  <div>
+                    Location: {[p.city, p.state, p.country].filter(Boolean).join(", ")}
+                  </div>
+                )}
 
-                {p.summary && <div style={{ fontSize: 12 }}>{shortNarrative(p.summary)}</div>}
+                {p.summary && (
+                  <div style={{ fontSize: 12, marginTop: 6 }}>
+                    {shortNarrative(p.summary)}
+                  </div>
+                )}
 
-                <div style={{ marginTop: 6 }}>
-                  {p.reportUrl && (
+                <div style={{ marginTop: 8 }}>
+                  {p.reportUrl ? (
                     <a href={p.reportUrl} target="_blank" rel="noreferrer">
                       Open report →
                     </a>
-                  )}
-                  {p.ntsbCaseId && (
-                    <div>
-                      <a
-                        href={`https://data.ntsb.gov/Docket/?NTSBNumber=${encodeURIComponent(
-                          p.ntsbCaseId
-                        )}`}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Open docket →
-                      </a>
-                    </div>
+                  ) : (
+                    <span style={{ opacity: 0.6 }}>Report not available</span>
                   )}
                 </div>
+
+                {p.ntsbCaseId && (
+                  <div style={{ marginTop: 4 }}>
+                    <a
+                      href={`https://data.ntsb.gov/Docket/?NTSBNumber=${encodeURIComponent(
+                        p.ntsbCaseId
+                      )}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Open docket →
+                    </a>
+                  </div>
+                )}
               </div>
             </Popup>
           </CircleMarker>
         ))}
       </MapContainer>
-
-      {/* ✅ ONLY NEW ADDITION */}
-      <a
-        href="https://antooncorp.com"
-        target="_blank"
-        rel="noreferrer"
-        style={{
-          position: "absolute",
-          bottom: 10,
-          left: 12,
-          zIndex: 1000,
-          fontSize: 12,
-          color: "#555",
-          textDecoration: "none",
-          background: "rgba(255,255,255,0.85)",
-          padding: "6px 10px",
-          borderRadius: 8,
-          boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
-        }}
-      >
-        © 2025 Antoon Corporation — All Rights Reserved.
-      </a>
 
       <style jsx global>{`
         .asw-root {
@@ -281,10 +281,10 @@ export default function MapView() {
           top: 12px;
           left: 12px;
           z-index: 1000;
-          background: white;
-          padding: 12px;
-          border-radius: 8px;
-          width: 300px;
+          background: rgba(255, 255, 255, 0.95);
+          padding: 14px;
+          border-radius: 12px;
+          width: 320px;
         }
       `}</style>
     </div>
