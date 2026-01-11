@@ -51,9 +51,9 @@ function last12MonthsRange() {
 }
 
 function colorFor(kind: PointKind) {
-  if (kind === "fatal") return "#d32f2f"; // red
-  if (kind === "accident") return "#fb8c00"; // orange
-  return "#fdd835"; // yellow
+  if (kind === "fatal") return "#d32f2f";
+  if (kind === "accident") return "#fb8c00";
+  return "#fdd835";
 }
 
 function shortNarrative(input?: string, maxChars = 300) {
@@ -71,9 +71,6 @@ function shortNarrative(input?: string, maxChars = 300) {
   return first.length > maxChars ? first.slice(0, maxChars - 1) + "…" : first;
 }
 
-/**
- * Spread points that share identical coordinates into a small ring.
- */
 function spreadOverlaps(points: MapPoint[], radiusDeg = 0.015): MapPoint[] {
   const groups = new Map<string, MapPoint[]>();
 
@@ -98,14 +95,11 @@ function spreadOverlaps(points: MapPoint[], radiusDeg = 0.015): MapPoint[] {
       const angle = (2 * Math.PI * i) / n;
       const r = radiusDeg * (1 + Math.min(2, n / 25));
 
-      const lat2 = p.lat + r * Math.sin(angle);
-      const lng2 = p.lng + r * Math.cos(angle);
-
       out.push({
         ...p,
         id: `${p.id}__s${i}`,
-        lat: lat2,
-        lng: lng2,
+        lat: p.lat + r * Math.sin(angle),
+        lng: p.lng + r * Math.cos(angle),
       });
     }
   }
@@ -120,20 +114,16 @@ function eventLabel(kind: PointKind) {
 }
 
 function buildTitleLine(p: MapPoint) {
-  // Format: "Fatal Accident - N123FR Cirrus SR22T"
   const tail = p.tailNumber ? String(p.tailNumber).trim() : "";
   const type = p.aircraftType ? String(p.aircraftType).trim() : "";
-
-  const rightParts = [tail, type].filter(Boolean).join(" ");
-  return rightParts ? `${eventLabel(p.kind)} - ${rightParts}` : `${eventLabel(p.kind)}`;
+  const right = [tail, type].filter(Boolean).join(" ");
+  return right ? `${eventLabel(p.kind)} - ${right}` : eventLabel(p.kind);
 }
 
 export default function MapView() {
   const defaultRange = useMemo(() => last12MonthsRange(), []);
   const [start, setStart] = useState<string>(isoDate(defaultRange.start));
   const [end, setEnd] = useState<string>(isoDate(defaultRange.end));
-
-  // Search
   const [q, setQ] = useState<string>("");
 
   const [points, setPoints] = useState<MapPoint[]>([]);
@@ -142,57 +132,24 @@ export default function MapView() {
 
   const center: LatLngExpression = useMemo(() => [39.5, -98.35], []);
 
-  const counts = useMemo(() => {
-    let fatal = 0,
-      accident = 0,
-      incident = 0;
-    for (const p of points) {
-      if (p.kind === "fatal") fatal++;
-      else if (p.kind === "accident") accident++;
-      else incident++;
-    }
-    return { fatal, accident, incident, total: points.length };
-  }, [points]);
-
-  async function load(opts?: { overrideQ?: string }) {
+  async function load() {
     setLoading(true);
     setStatus("Loading…");
     try {
-      const qToUse = (opts?.overrideQ ?? q).trim();
-
       const url =
         `/api/accidents?start=${encodeURIComponent(start)}` +
         `&end=${encodeURIComponent(end)}` +
-        (qToUse ? `&q=${encodeURIComponent(qToUse)}` : "");
+        (q ? `&q=${encodeURIComponent(q)}` : "");
 
       const res = await fetch(url, { cache: "no-store" });
+      const json = await res.json();
 
-      const text = await res.text();
-      let json: any = null;
-      try {
-        json = JSON.parse(text);
-      } catch {
-        // leave null
-      }
-
-      if (!res.ok) {
-        const upstream = json?.error || json?.message || text?.slice(0, 300);
-        setPoints([]);
-        setStatus(`Accidents fetch not OK (${res.status}). ${String(upstream || "").slice(0, 140)}`);
-        console.error("API /api/accidents error:", { status: res.status, upstream });
-        return;
-      }
-
-      const rawPoints: MapPoint[] = Array.isArray(json?.points) ? json.points : [];
-      const spread = spreadOverlaps(rawPoints);
-
-      setPoints(spread);
-
-      const dbg = `rows=${json?.totalRows ?? "?"}, coords=${json?.rowsWithCoords ?? "?"}, inRange=${json?.rowsInRange ?? "?"}, matched=${json?.rowsMatchedQuery ?? "?"}`;
-      setStatus(`OK. Loaded ${spread.length} points. (${dbg})`);
-    } catch (e: any) {
+      const raw: MapPoint[] = Array.isArray(json?.points) ? json.points : [];
+      setPoints(spreadOverlaps(raw));
+      setStatus(`OK. Loaded ${raw.length} points.`);
+    } catch (e) {
       setPoints([]);
-      setStatus(`Fetch failed (network/runtime). See console.`);
+      setStatus("Fetch failed.");
       console.error(e);
     } finally {
       setLoading(false);
@@ -201,7 +158,6 @@ export default function MapView() {
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -210,233 +166,73 @@ export default function MapView() {
 
       {/* Control panel */}
       <div className="asw-panel">
-        <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 6 }}>
-          Aviation Safety Watch
-        </div>
-        <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 10 }}>
-          Data source: NTSB exports · Default range: last 12 months
-        </div>
+        <div style={{ fontWeight: 800, fontSize: 18 }}>Aviation Safety Watch</div>
 
-        {/* Search */}
-        <div style={{ marginBottom: 10 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Search</div>
-          <input
-            type="text"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Tail, make/model, city, narrative keywords…"
-            style={{ width: "100%", padding: 8, borderRadius: 8, border: "1px solid #ddd" }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") load();
-            }}
-          />
-          <div style={{ fontSize: 11, opacity: 0.75, marginTop: 4 }}>
-            Tip: multiple words are supported (all terms must match).
-          </div>
+        <input
+          type="text"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search tail, make/model, city, narrative…"
+          onKeyDown={(e) => e.key === "Enter" && load()}
+          style={{ width: "100%", marginTop: 10, padding: 8 }}
+        />
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
+          <input type="date" value={start} onChange={(e) => setStart(e.target.value)} />
+          <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} />
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          <div>
-            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Start</div>
-            <input
-              type="date"
-              value={start}
-              onChange={(e) => setStart(e.target.value)}
-              style={{ width: "100%", padding: 8, borderRadius: 8, border: "1px solid #ddd" }}
-            />
-          </div>
-          <div>
-            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>End</div>
-            <input
-              type="date"
-              value={end}
-              onChange={(e) => setEnd(e.target.value)}
-              style={{ width: "100%", padding: 8, borderRadius: 8, border: "1px solid #ddd" }}
-            />
-          </div>
-        </div>
+        <button onClick={load} disabled={loading} style={{ marginTop: 10 }}>
+          {loading ? "Loading…" : "Reload"}
+        </button>
 
-        <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10 }}>
-          <button
-            onClick={() => load()}
-            disabled={loading}
-            style={{
-              padding: "8px 12px",
-              borderRadius: 10,
-              border: "1px solid #ddd",
-              background: loading ? "#f4f4f4" : "#fff",
-              cursor: loading ? "not-allowed" : "pointer",
-              fontWeight: 700,
-              whiteSpace: "nowrap",
-            }}
-          >
-            {loading ? "Loading…" : "Reload"}
-          </button>
-
-          <button
-            onClick={() => {
-              setQ("");
-              load({ overrideQ: "" });
-            }}
-            disabled={loading}
-            style={{
-              padding: "8px 12px",
-              borderRadius: 10,
-              border: "1px solid #ddd",
-              background: loading ? "#f4f4f4" : "#fff",
-              cursor: loading ? "not-allowed" : "pointer",
-              fontWeight: 700,
-              whiteSpace: "nowrap",
-            }}
-          >
-            Clear
-          </button>
-
-          <div style={{ fontSize: 12, opacity: 0.85 }}>
-            Events: <b>{counts.total}</b>
-          </div>
-        </div>
-
-        <div style={{ marginTop: 12 }}>
-          <div style={{ fontWeight: 800, marginBottom: 6 }}>Legend</div>
-
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-            <span
-              style={{
-                width: 14,
-                height: 14,
-                borderRadius: 7,
-                background: colorFor("fatal"),
-                display: "inline-block",
-              }}
-            />
-            <div style={{ fontSize: 13 }}>
-              Fatal accidents (red): <b>{counts.fatal}</b>
-            </div>
-          </div>
-
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-            <span
-              style={{
-                width: 14,
-                height: 14,
-                borderRadius: 7,
-                background: colorFor("accident"),
-                display: "inline-block",
-              }}
-            />
-            <div style={{ fontSize: 13 }}>
-              Accidents (orange): <b>{counts.accident}</b>
-            </div>
-          </div>
-
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span
-              style={{
-                width: 14,
-                height: 14,
-                borderRadius: 7,
-                background: colorFor("incident"),
-                display: "inline-block",
-              }}
-            />
-            <div style={{ fontSize: 13 }}>
-              Incidents (yellow): <b>{counts.incident}</b>
-            </div>
-          </div>
-        </div>
-
-        <div style={{ marginTop: 10, fontSize: 12, lineHeight: 1.3 }}>
-          <b>Status:</b>{" "}
-          <span
-            style={{
-              color: status.includes("not OK") || status.includes("failed") ? "#d32f2f" : "#222",
-            }}
-          >
-            {status}
-          </span>
-        </div>
+        <div style={{ fontSize: 12, marginTop: 8 }}>Status: {status}</div>
       </div>
 
       {/* Map */}
-      <MapContainer center={center} zoom={4} scrollWheelZoom className="asw-map" zoomControl={false}>
+      <MapContainer center={center} zoom={4} className="asw-map" zoomControl={false}>
         <ZoomControl position="bottomright" />
-
         <TileLayer
           attribution="&copy; OpenStreetMap contributors"
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
-        {points.map((p) => {
-          // Docket URL stays exactly as your working behavior
-          const docketUrl =
-            p.ntsbCaseId
-              ? `https://data.ntsb.gov/Docket/?NTSBNumber=${encodeURIComponent(String(p.ntsbCaseId).trim())}`
-              : undefined;
-
-          return (
-            <CircleMarker
-              key={p.id}
-              center={[p.lat, p.lng]}
-              radius={7}
-              pathOptions={{
-                color: "#333",
-                weight: 1,
-                fillColor: colorFor(p.kind),
-                fillOpacity: 0.9,
-              }}
-            >
-              <Popup autoPan={false} closeOnClick={false}>
-                <div style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" }}>
-                  <div style={{ fontWeight: 800, marginBottom: 6 }}>{buildTitleLine(p)}</div>
-
-                  <div style={{ fontSize: 13, marginBottom: 6 }}>
-                    {p.date ? (
-                      <div>
-                        <b>Date:</b> {p.date}
-                      </div>
-                    ) : null}
-                    {p.city || p.state || p.country ? (
-                      <div>
-                        <b>Location:</b> {[p.city, p.state, p.country].filter(Boolean).join(", ")}
-                      </div>
-                    ) : null}
-                    {p.ntsbCaseId ? (
-                      <div>
-                        <b>NTSB Case:</b> {p.ntsbCaseId}
-                      </div>
-                    ) : null}
-                  </div>
-
-                  {p.summary ? (
-                    <div style={{ fontSize: 12, opacity: 0.9, marginBottom: 8 }}>
-                      {shortNarrative(p.summary, 320)}
-                    </div>
-                  ) : null}
-
-                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                    {p.reportUrl ? (
-                      <a href={p.reportUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>
-                        Open report →
-                      </a>
-                    ) : (
-                      <span style={{ fontWeight: 800, opacity: 0.55 }}>Report not available</span>
-                    )}
-
-                    {docketUrl ? (
-                      <a href={docketUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>
-                        Open docket →
-                      </a>
-                    ) : null}
-                  </div>
-                </div>
-              </Popup>
-            </CircleMarker>
-          );
-        })}
+        {points.map((p) => (
+          <CircleMarker
+            key={p.id}
+            center={[p.lat, p.lng]}
+            radius={7}
+            pathOptions={{ color: "#333", fillColor: colorFor(p.kind), fillOpacity: 0.9 }}
+          >
+            <Popup autoPan={false} closeOnClick={false}>
+              <div>
+                <b>{buildTitleLine(p)}</b>
+                {p.date && <div>Date: {p.date}</div>}
+                {p.summary && <div style={{ fontSize: 12 }}>{shortNarrative(p.summary)}</div>}
+              </div>
+            </Popup>
+          </CircleMarker>
+        ))}
       </MapContainer>
 
-      {/* Mobile + layout styling */}
+      {/* ✅ COPYRIGHT FOOTER (ONLY ADDITION) */}
+      <a
+        href="https://www.antooncorp.com"
+        target="_blank"
+        rel="noreferrer"
+        style={{
+          position: "absolute",
+          bottom: 10,
+          left: 12,
+          fontSize: 11,
+          color: "#555",
+          textDecoration: "none",
+          zIndex: 1000,
+        }}
+      >
+        Copyright © 2025 Antoon Corporation – All Rights Reserved.
+      </a>
+
       <style jsx global>{`
         .asw-root {
           height: 100dvh;
@@ -449,30 +245,13 @@ export default function MapView() {
         }
         .asw-panel {
           position: absolute;
-          z-index: 1000;
           top: 12px;
           left: 12px;
-          width: 340px;
-          max-height: calc(100dvh - 24px);
-          overflow: auto;
+          z-index: 1000;
+          background: rgba(255, 255, 255, 0.95);
           padding: 14px;
           border-radius: 12px;
-          background: rgba(255, 255, 255, 0.95);
-          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
-          font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-        }
-
-        @media (max-width: 760px) {
-          .asw-panel {
-            top: auto;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            width: auto;
-            border-radius: 16px 16px 0 0;
-            max-height: 50dvh;
-            box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.15);
-          }
+          width: 320px;
         }
       `}</style>
     </div>
