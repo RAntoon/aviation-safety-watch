@@ -216,14 +216,20 @@ export default function MapView() {
           Data source: NTSB exports · Default range: last 12 months
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 10 }}>
           <div>
             <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Start</div>
             <input
               type="date"
               value={start}
               onChange={(e) => setStart(e.target.value)}
-              style={{ width: "100%", padding: 8, borderRadius: 8, border: "1px solid #ddd" }}
+              style={{ 
+                width: "100%", 
+                padding: 8, 
+                borderRadius: 8, 
+                border: "1px solid #ddd",
+                boxSizing: "border-box"
+              }}
             />
           </div>
           <div>
@@ -232,7 +238,13 @@ export default function MapView() {
               type="date"
               value={end}
               onChange={(e) => setEnd(e.target.value)}
-              style={{ width: "100%", padding: 8, borderRadius: 8, border: "1px solid #ddd" }}
+              style={{ 
+                width: "100%", 
+                padding: 8, 
+                borderRadius: 8, 
+                border: "1px solid #ddd",
+                boxSizing: "border-box"
+              }}
             />
           </div>
         </div>
@@ -315,6 +327,34 @@ export default function MapView() {
         </div>
       </div>
 
+      {/* Copyright Footer - Bottom Left */}
+      <div
+        style={{
+          position: "absolute",
+          zIndex: 1000,
+          bottom: 12,
+          left: 12,
+          padding: "6px 0",
+          fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
+          fontSize: 12,
+          color: "#333",
+        }}
+      >
+        Copyright © {new Date().getFullYear()}{" "}
+        <a 
+          href="https://antooncorp.com" 
+          target="_blank" 
+          rel="noopener noreferrer"
+          style={{ 
+            color: "#333",
+            textDecoration: "none"
+          }}
+        >
+          Antoon Corporation
+        </a>
+        {" "}– All Rights Reserved.
+      </div>
+
       {/* Map */}
       <MapContainer
         center={center}
@@ -333,7 +373,7 @@ export default function MapView() {
         {points.map((p) => {
           const titleRight = p.aircraftType ? ` - ${p.aircraftType}` : "";
 
-          // Primary docket link (sometimes dockets aren’t published yet)
+          // Primary docket link (sometimes dockets aren't published yet)
           const docketUrl =
             p.ntsbCaseId
               ? `https://data.ntsb.gov/Docket/?NTSBNumber=${encodeURIComponent(String(p.ntsbCaseId).trim())}`
