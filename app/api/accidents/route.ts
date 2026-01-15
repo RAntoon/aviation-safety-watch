@@ -57,6 +57,7 @@ export async function GET(req: Request) {
       SELECT 
         id,
         ntsb_number,
+        event_id,
         event_date,
         event_type,
         highest_injury,
@@ -68,6 +69,7 @@ export async function GET(req: Request) {
         fatal_count,
         aircraft_make,
         aircraft_model,
+        registration_number,
         COALESCE(prelim_narrative, factual_narrative, analysis_narrative) as summary
       FROM accidents
       WHERE latitude IS NOT NULL 
@@ -107,11 +109,14 @@ export async function GET(req: Request) {
     // Transform results into the format expected by MapView
     const points = result.rows.map((row) => {
       // Determine kind based on fatal count and event type
-      let kind: "fatal" | "accident" | "incident" = "incident";
+      // Determine kind based on fatal count and event type
+      let kind: "fatal" | "accident" | "incident" | "occurrence" = "incident";
       if (row.fatal_count > 0 || row.highest_injury?.toLowerCase() === "fatal") {
         kind = "fatal";
       } else if (row.event_type === "ACC") {
         kind = "accident";
+      } else if (row.event_type && row.event_type.toLowerCase().includes("occ")) {
+        kind = "occurrence";
       }
 
       return {
@@ -124,10 +129,13 @@ export async function GET(req: Request) {
         state: row.state || undefined,
         country: row.country || undefined,
         ntsbCaseId: row.ntsb_number || undefined,
+        eventId: row.event_id || undefined,
         aircraftType: [row.aircraft_make, row.aircraft_model]
           .filter(Boolean)
           .join(" ") || undefined,
         summary: row.summary ? String(row.summary).substring(0, 300) : undefined,
+        registrationNumber: row.registration_number || undefined,
+        fatalCount: row.fatal_count || 0,
       };
     });
 

@@ -13,7 +13,7 @@ const CircleMarker = RL.CircleMarker as unknown as React.FC<any>;
 const Popup = RL.Popup as unknown as React.FC<any>;
 const ZoomControl = RL.ZoomControl as unknown as React.FC<any>;
 
-type PointKind = "fatal" | "accident" | "incident";
+type PointKind = "fatal" | "accident" | "incident" | "occurrence";
 
 type MapPoint = {
   id: string;
@@ -28,9 +28,12 @@ type MapPoint = {
 
   docketUrl?: string;
   ntsbCaseId?: string;
+  eventId?: string;
 
   summary?: string;
   aircraftType?: string;
+  registrationNumber?: string;
+  fatalCount?: number;
 };
 
 function isoDate(d: Date) {
@@ -50,7 +53,8 @@ function last12MonthsRange() {
 function colorFor(kind: PointKind) {
   if (kind === "fatal") return "#d32f2f"; // red
   if (kind === "accident") return "#fb8c00"; // orange
-  return "#fdd835"; // yellow
+  if (kind === "incident") return "#fdd835"; // yellow
+  return "#2196f3"; // blue for occurrence
 }
 
 function shortNarrative(input?: string, maxChars = 300) {
@@ -132,16 +136,18 @@ export default function MapView() {
 
   const center: LatLngExpression = useMemo(() => [39.5, -98.35], []); // US-centered default
 
-  const counts = useMemo(() => {
+const counts = useMemo(() => {
     let fatal = 0,
       accident = 0,
-      incident = 0;
+      incident = 0,
+      occurrence = 0;
     for (const p of points) {
       if (p.kind === "fatal") fatal++;
       else if (p.kind === "accident") accident++;
-      else incident++;
+      else if (p.kind === "incident") incident++;
+      else if (p.kind === "occurrence") occurrence++;
     }
-    return { fatal, accident, incident, total: points.length };
+    return { fatal, accident, incident, occurrence, total: points.length };
   }, [points]);
 
   async function load() {
@@ -317,6 +323,21 @@ export default function MapView() {
               Incidents (yellow): <b>{counts.incident}</b>
             </div>
           </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6 }}>
+            <span
+              style={{
+                width: 14,
+                height: 14,
+                borderRadius: 7,
+                background: colorFor("occurrence"),
+                display: "inline-block",
+              }}
+            />
+            <div style={{ fontSize: 13 }}>
+              Occurrences (blue): <b>{counts.occurrence}</b>
+            </div>
+          </div>
         </div>
 
         <div style={{ marginTop: 10, fontSize: 12, lineHeight: 1.3 }}>
@@ -371,19 +392,25 @@ export default function MapView() {
         />
 
         {points.map((p) => {
-          const titleRight = p.aircraftType ? ` - ${p.aircraftType}` : "";
+          // Build title: "Accident/Incident [Tail Number] - [Aircraft Type]"
+          const eventTypeLabel = 
+            p.kind === "fatal" ? "Fatal Accident" :
+            p.kind === "accident" ? "Accident" :
+            p.kind === "incident" ? "Incident" : "Occurrence";
+          
+          const tailNumber = p.registrationNumber ? ` ${p.registrationNumber}` : "";
+          const aircraftType = p.aircraftType ? ` - ${p.aircraftType}` : "";
+          const title = `${eventTypeLabel}${tailNumber}${aircraftType}`;
 
-          // Primary docket link (sometimes dockets aren't published yet)
-          const docketUrl =
-            p.ntsbCaseId
-              ? `https://data.ntsb.gov/Docket/?NTSBNumber=${encodeURIComponent(String(p.ntsbCaseId).trim())}`
-              : undefined;
+          // Docket link (always available)
+          const docketUrl = p.ntsbCaseId
+            ? `https://data.ntsb.gov/Docket/?NTSBNumber=${encodeURIComponent(String(p.ntsbCaseId).trim())}`
+            : undefined;
 
-          // Fallback: search page (always works as a fallback)
-          const searchUrl =
-            p.ntsbCaseId
-              ? `https://data.ntsb.gov/Docket/forms/Searchdocket?NTSBNumber=${encodeURIComponent(String(p.ntsbCaseId).trim())}`
-              : `https://data.ntsb.gov/Docket/forms/Searchdocket`;
+          // Accident Report link - direct PDF
+          const reportUrl = p.eventId
+            ? `https://data.ntsb.gov/carol-repgen/api/Aviation/ReportMain/GenerateNewestReport/${p.eventId}/pdf`
+            : undefined;
 
           return (
             <CircleMarker
@@ -397,15 +424,10 @@ export default function MapView() {
                 fillOpacity: 0.9,
               }}
             >
-              {/* ✅ prevents map shifting/zooming when popup opens */}
               <Popup autoPan={false} closeOnClick={false}>
                 <div style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" }}>
                   <div style={{ fontWeight: 800, marginBottom: 6 }}>
-                    {p.kind === "fatal"
-                      ? `Fatal Accident${titleRight}`
-                      : p.kind === "accident"
-                      ? `Accident${titleRight}`
-                      : `Incident${titleRight}`}
+                    {title}
                   </div>
 
                   <div style={{ fontSize: 13, marginBottom: 6 }}>
@@ -424,6 +446,11 @@ export default function MapView() {
                         <b>NTSB Case:</b> {p.ntsbCaseId}
                       </div>
                     ) : null}
+                    {p.fatalCount !== undefined && p.fatalCount > 0 ? (
+                      <div>
+                        <b>Fatalities:</b> {p.fatalCount}
+                      </div>
+                    ) : null}
                   </div>
 
                   {p.summary ? (
@@ -433,15 +460,17 @@ export default function MapView() {
                   ) : null}
 
                   <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                    {docketUrl ? (
-                      <a href={docketUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>
-                        Open docket →
+                    {reportUrl ? (
+                      <a href={reportUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>
+                        Investigation →
                       </a>
                     ) : null}
 
-                    <a href={searchUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>
-                      Search docket →
-                    </a>
+                    {docketUrl ? (
+                      <a href={docketUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>
+                        Docket →
+                      </a>
+                    ) : null}
                   </div>
                 </div>
               </Popup>
