@@ -2,6 +2,16 @@ import { NextResponse } from "next/server";
 
 export async function GET() {
   try {
+    const cronSecret = process.env.CRON_SECRET;
+    
+    // Debug info
+    if (!cronSecret) {
+      return NextResponse.json({ 
+        error: 'CRON_SECRET not found in environment variables',
+        availableEnvVars: Object.keys(process.env).filter(k => !k.includes('PASSWORD') && !k.includes('TOKEN'))
+      });
+    }
+    
     // Call the sync endpoint with the secret
     const baseUrl = process.env.VERCEL_URL 
       ? `https://${process.env.VERCEL_URL}`
@@ -9,7 +19,7 @@ export async function GET() {
       
     const response = await fetch(`${baseUrl}/api/sync-ntsb`, {
       headers: {
-        'Authorization': `Bearer ${process.env.CRON_SECRET}`
+        'Authorization': `Bearer ${cronSecret}`
       }
     });
     
@@ -24,6 +34,7 @@ export async function GET() {
         error: 'Non-JSON response',
         status: response.status,
         contentType,
+        secretLength: cronSecret.length,
         body: text.substring(0, 500)
       });
     }
