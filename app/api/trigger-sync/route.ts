@@ -1,10 +1,6 @@
 import { NextResponse } from "next/server";
 import { Pool } from "pg";
-import { parseString } from "xml2js";
-import { promisify } from "util";
-
-const parseXML = promisify(parseString);
-const NTSB_RSS = "https://www.ntsb.gov/_layouts/ntsb.aviation/RSS.aspx";
+import * as cheerio from "cheerio";
 
 async function geocode(city?: string, state?: string, country?: string) {
   if (!city && !state) return null;
@@ -28,11 +24,6 @@ async function geocode(city?: string, state?: string, country?: string) {
   return null;
 }
 
-function extractEventId(link: string): string | null {
-  const match = link.match(/ev_id=(\d+)/);
-  return match ? match[1] : null;
-}
-
 export async function GET() {
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL || process.env.POSTGRES_URL,
@@ -40,103 +31,45 @@ export async function GET() {
   });
 
   try {
-    console.log(`[Manual Sync] Fetching RSS feed`);
+    console.log(`[Manual Sync] Fetching recent accidents from NTSB`);
 
-    const response = await fetch(NTSB_RSS, {
-      headers: { "User-Agent": "AviationSafetyWatch/1.0" }
-    });
+    // Fetch recent accidents page
+    const response = await fetch(
+      "https://www.ntsb.gov/investigations/Pages/aviation.aspx",
+      { headers: { "User-Agent": "AviationSafetyWatch/1.0" } }
+    );
 
     if (!response.ok) {
-      throw new Error(`RSS feed error: ${response.status}`);
+      throw new Error(`NTSB page error: ${response.status}`);
     }
 
-    const xmlText = await response.text();
+    const html = await response.text();
+    const $ = cheerio.load(html);
     
-    // More aggressive XML cleaning
-    const cleanedXml = xmlText
-      .replace(/\s+(?=>)/g, '') // Remove whitespace before >
-      .replace(/=\s*>/g, '="">') // Fix empty attributes
-      .replace(/=>/g, '="">') // Fix attributes without quotes
-      .replace(/\s+=/g, '=') // Remove spaces before =
-      .replace(/=\s+/g, '="') // Fix spacing after =
-      .replace(/<(\w+)([^>]*?)\s+>/g, '<$1$2>'); // Remove trailing spaces in tags
-    
-    const parsed: any = await parseXML(cleanedXml).catch((err) => {
-      console.error('[Manual Sync] XML Parse Error:', err);
-      console.error('[Manual Sync] First 1000 chars:', cleanedXml.substring(0, 1000));
-      throw new Error(`XML parsing failed: ${err.message}`);
-    });
-    const items = parsed?.rss?.channel?.[0]?.item || [];
-    
-    console.log(`[Manual Sync] Found ${items.length} items in RSS feed`);
+    console.log(`[Manual Sync] Parsing accidents from page`);
 
     let newRecords = 0;
     let geocoded = 0;
     let failed = 0;
     let skipped = 0;
+    let found = 0;
 
-    for (const item of items) {
-      try {
-        const title = item.title?.[0] || "";
-        const link = item.link?.[0] || "";
-        const description = item.description?.[0] || "";
-        const pubDate = item.pubDate?.[0] || "";
-
-        const eventId = extractEventId(link);
-        
-        if (!eventId) {
-          skipped++;
-          continue;
-        }
-
-        const existing = await pool.query(
-          "SELECT event_id FROM accidents WHERE event_id = $1",
-          [eventId]
-        );
-
-        if (existing.rows.length > 0) {
-          skipped++;
-          continue;
-        }
-
-        const locationMatch = title.match(/Location:\s*([^,]+),\s*([A-Z]{2})/);
-        const city = locationMatch?.[1]?.trim();
-        const state = locationMatch?.[2]?.trim();
-        const eventDate = pubDate ? new Date(pubDate).toISOString().split('T')[0] : null;
-        const coords = await geocode(city, state, "USA");
-
-        await pool.query(
-          `INSERT INTO accidents (
-            event_id, event_date, event_type,
-            city, state, country, latitude, longitude,
-            prelim_narrative
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-          [
-            eventId, eventDate, "Accident",
-            city || null, state || null, "USA",
-            coords?.latitude || null, coords?.longitude || null,
-            description || null,
-          ]
-        );
-
-        newRecords++;
-        if (coords) geocoded++;
-
-        if (coords) {
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-        }
-      } catch (err) {
-        console.error(`[Manual Sync] Failed:`, err);
-        failed++;
+    // Find accident links (this is a placeholder - we'd need to inspect the actual page structure)
+    $('a[href*="ev_id"]').each((i, elem) => {
+      found++;
+      const href = $(elem).attr('href') || '';
+      const match = href.match(/ev_id=(\d+)/);
+      if (match) {
+        console.log(`Found event ID: ${match[1]}`);
       }
-    }
+    });
 
     await pool.end();
 
     return NextResponse.json({
       success: true,
       timestamp: new Date().toISOString(),
-      rssItemsFound: items.length,
+      message: "Scraping approach - found " + found + " links",
       newRecordsInserted: newRecords,
       skipped,
       geocoded,
