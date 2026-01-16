@@ -2,7 +2,6 @@
 
 import { useState, useMemo, useEffect } from "react";
 import dynamic from "next/dynamic";
-// @ts-expect-error - DataView component
 import DataView from "./components/DataView";
 
 const MapView = dynamic(() => import("./components/MapView"), {
