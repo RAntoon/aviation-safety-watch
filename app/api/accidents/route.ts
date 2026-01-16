@@ -133,7 +133,7 @@ export async function GET(req: Request) {
         aircraftType: [row.aircraft_make, row.aircraft_model]
           .filter(Boolean)
           .join(" ") || undefined,
-        summary: row.summary ? String(row.summary).substring(0, 300) : undefined,
+        summary: row.summary || undefined,
         registrationNumber: row.registration_number || undefined,
         fatalCount: row.fatal_count || 0,
       };
