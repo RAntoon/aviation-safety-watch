@@ -133,6 +133,8 @@ export default function MapView() {
   const [points, setPoints] = useState<MapPoint[]>([]);
   const [status, setStatus] = useState<string>("Idle");
   const [loading, setLoading] = useState<boolean>(false);
+  const [isPanelOpen, setIsPanelOpen] = useState(true);
+  const [expandedPopups, setExpandedPopups] = useState<Set<string>>(new Set());
 
   const center: LatLngExpression = useMemo(() => [39.5, -98.35], []); // US-centered default
 
@@ -202,17 +204,19 @@ const counts = useMemo(() => {
 
       {/* Control panel */}
       <div
+        className="control-panel"
         style={{
           position: "absolute",
           zIndex: 1000,
           top: 12,
-          left: 12,
+          left: isPanelOpen ? 12 : -320,
           width: 320,
           padding: 14,
           borderRadius: 12,
           background: "rgba(255,255,255,0.95)",
           boxShadow: "0 10px 30px rgba(0,0,0,0.15)",
           fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
+          transition: "left 0.3s ease",
         }}
       >
         <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 6 }}>
@@ -229,6 +233,7 @@ const counts = useMemo(() => {
               type="date"
               value={start}
               onChange={(e) => setStart(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && load()}
               style={{ 
                 width: "100%", 
                 padding: 8, 
@@ -244,6 +249,7 @@ const counts = useMemo(() => {
               type="date"
               value={end}
               onChange={(e) => setEnd(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && load()}
               style={{ 
                 width: "100%", 
                 padding: 8, 
@@ -347,6 +353,33 @@ const counts = useMemo(() => {
           </span>
         </div>
       </div>
+
+      {/* Panel toggle button - mobile only */}
+      <button
+        className="panel-toggle"
+        onClick={() => setIsPanelOpen(!isPanelOpen)}
+        style={{
+          position: "absolute",
+          top: "20%",
+          left: isPanelOpen ? 330 : 0,
+          transform: "translateY(-50%)",
+          zIndex: 1001,
+          background: "white",
+          border: "2px solid #ddd",
+          borderLeft: "none",
+          borderRadius: "0 8px 8px 0",
+          padding: "20px 6px",
+          cursor: "pointer",
+          boxShadow: "2px 0 8px rgba(0,0,0,0.15)",
+          fontSize: 14,
+          transition: "left 0.3s ease",
+          display: "none",
+          writingMode: "vertical-rl",
+          textOrientation: "mixed",
+        }}
+      >
+        {isPanelOpen ? "◀" : "▶"}
+      </button>
 
       {/* Copyright Footer - Bottom Left */}
       <div
@@ -455,7 +488,36 @@ const counts = useMemo(() => {
 
                   {p.summary ? (
                     <div style={{ fontSize: 12, opacity: 0.9, marginBottom: 8 }}>
-                      {shortNarrative(p.summary, 320)}
+                      {expandedPopups.has(p.id) 
+                        ? p.summary
+                        : shortNarrative(p.summary, 320)}
+                      {" "}
+                      {shortNarrative(p.summary, 320).endsWith("…") && (
+                        <span
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setExpandedPopups(prev => {
+                              const next = new Set(prev);
+                              if (next.has(p.id)) {
+                                next.delete(p.id);
+                              } else {
+                                next.add(p.id);
+                              }
+                              return next;
+                            });
+                          }}
+                          style={{
+                            color: "#2563eb",
+                            cursor: "pointer",
+                            fontSize: 12,
+                            fontWeight: 700,
+                            textDecoration: "underline"
+                          }}
+                        >
+                          {expandedPopups.has(p.id) ? "[show less]" : "[...]"}
+                        </span>
+                      )}
                     </div>
                   ) : null}
 
@@ -478,6 +540,23 @@ const counts = useMemo(() => {
           );
         })}
       </MapContainer>
+
+      {/* Mobile styles */}
+      <style jsx global>{`
+        @media (max-width: 768px) {
+          .control-panel {
+            top: 0 !important;
+            left: ${isPanelOpen ? "0" : "-320px"} !important;
+            border-radius: 0 0 12px 0 !important;
+            width: 100vw !important;
+            max-width: 320px !important;
+          }
+
+          .panel-toggle {
+            display: block !important;
+          }
+        }
+      `}</style>
     </div>
   );
 }

@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useEffect } from "react";
 import dynamic from "next/dynamic";
+// @ts-expect-error - DataView component
 import DataView from "./components/DataView";
 
 const MapView = dynamic(() => import("./components/MapView"), {
@@ -113,6 +114,7 @@ export default function HomePage() {
       )}
 
       <div
+        className="view-toggle"
         style={{
           position: "fixed",
           top: showDisclaimer ? 60 : 12,
@@ -141,7 +143,7 @@ export default function HomePage() {
             transition: "all 0.2s",
           }}
         >
-          🗺️ Map View
+          Map View
         </button>
         <button
           onClick={() => setView("data")}
@@ -157,11 +159,24 @@ export default function HomePage() {
             transition: "all 0.2s",
           }}
         >
-          📊 Data View
+          Data View
         </button>
       </div>
 
       {view === "map" ? <MapView /> : <DataView startDate={startDate} endDate={endDate} />}
+      <style jsx global>{`
+        @media (max-width: 768px) {
+          .view-toggle {
+            top: auto !important;
+            bottom: 40px !important;
+          }
+          
+          .view-toggle button {
+            padding: 8px 16px !important;
+            font-size: 12px !important;
+          }
+        }
+      `}</style>
     </>
   );
 }
