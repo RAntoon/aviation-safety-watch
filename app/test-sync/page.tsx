@@ -9,11 +9,8 @@ export default function TestSync() {
   const runSync = async () => {
     setLoading(true);
     try {
-      const response = await fetch('/api/sync-ntsb', {
-        headers: {
-          'Authorization': 'Bearer TjIGdKqQx3XQULhL3AtPrNbTO46950+vH1/tTg6vTjY='
-        }
-      });
+      // Call our wrapper API that has the secret
+      const response = await fetch('/api/trigger-sync');
       const data = await response.json();
       setResult(data);
     } catch (error: any) {
