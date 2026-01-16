@@ -17,12 +17,14 @@
     "pg": "^8.16.3",
     "react": "18.2.0",
     "react-dom": "18.2.0",
-    "react-leaflet": "^4.2.1"
+    "react-leaflet": "^4.2.1",
+    "xml2js": "^0.6.2"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",
     "@types/react": "^18.2.66",
     "@types/react-dom": "^18.2.22",
+    "@types/xml2js": "^0.4.14",
     "typescript": "^5.4.5"
   }
 }
