@@ -4,11 +4,11 @@ import Script from "next/script";
 export const metadata = {
   title: "Aviation Safety Watch | Global Aircraft Accidents & Incidents Map",
   description:
-    "Interactive map of aviation accidents and incidents worldwide. Filter by date range, aircraft type, operator, and severity using official investigation records.",
+    "Interactive map and database of aviation accidents, incidents, and occurrences worldwide since 1962. Search, filter, and explore official NTSB investigation records with direct access to reports and dockets.",
   openGraph: {
     title: "Aviation Safety Watch",
     description:
-      "Explore aviation accidents and incidents worldwide using an interactive, filterable map.",
+      "Explore 178,000+ aviation accidents and incidents worldwide using an interactive map and searchable database.",
     url: "https://aviationsafetywatch.com",
     siteName: "Aviation Safety Watch",
     type: "website",
