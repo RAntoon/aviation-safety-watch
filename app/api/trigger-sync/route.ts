@@ -51,11 +51,21 @@ export async function GET() {
     }
 
     const xmlText = await response.text();
-    const cleanedXml = xmlText
-      .replace(/\s+(?=>)/g, '')
-      .replace(/=\s*>/g, '="">');
     
-    const parsed: any = await parseXML(cleanedXml);
+    // More aggressive XML cleaning
+    const cleanedXml = xmlText
+      .replace(/\s+(?=>)/g, '') // Remove whitespace before >
+      .replace(/=\s*>/g, '="">') // Fix empty attributes
+      .replace(/=>/g, '="">') // Fix attributes without quotes
+      .replace(/\s+=/g, '=') // Remove spaces before =
+      .replace(/=\s+/g, '="') // Fix spacing after =
+      .replace(/<(\w+)([^>]*?)\s+>/g, '<$1$2>'); // Remove trailing spaces in tags
+    
+    const parsed: any = await parseXML(cleanedXml).catch((err) => {
+      console.error('[Manual Sync] XML Parse Error:', err);
+      console.error('[Manual Sync] First 1000 chars:', cleanedXml.substring(0, 1000));
+      throw new Error(`XML parsing failed: ${err.message}`);
+    });
     const items = parsed?.rss?.channel?.[0]?.item || [];
     
     console.log(`[Manual Sync] Found ${items.length} items in RSS feed`);
