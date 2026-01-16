@@ -69,11 +69,7 @@ export async function GET(request: Request) {
       .replace(/\s+(?=>)/g, '') // Remove whitespace before >
       .replace(/=\s*>/g, '="">'); // Fix empty attributes
     
-    const parsed: any = await parseXML(cleanedXml, {
-      trim: true,
-      explicitArray: true,
-      ignoreAttrs: false
-    });
+    const parsed: any = await parseXML(cleanedXml);
     
     const items = parsed?.rss?.channel?.[0]?.item || [];
     console.log(`[NTSB Sync] Found ${items.length} items in RSS feed`);
