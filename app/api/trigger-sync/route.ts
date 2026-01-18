@@ -9,7 +9,9 @@ export async function GET() {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${process.env.CRON_SECRET}`,
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
         },
+        cache: 'no-store',
       }
     );
 
