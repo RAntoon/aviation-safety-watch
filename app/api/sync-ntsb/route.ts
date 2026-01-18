@@ -39,11 +39,22 @@ function extractEventId(link: string): string | null {
 }
 
 export async function GET(request: Request) {
-  // Verify cron secret for security
+  // Verify this is a legitimate Vercel cron request
   const authHeader = request.headers.get("authorization");
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  const cronHeader = request.headers.get("x-vercel-cron");
+  
+  // Accept either:
+  // 1. Vercel's cron header (automatic cron jobs)
+  // 2. Manual authorization with CRON_SECRET (for trigger-sync wrapper)
+  const isVercelCron = cronHeader === "true";
+  const isManualAuth = authHeader === `Bearer ${process.env.CRON_SECRET}`;
+  
+  if (!isVercelCron && !isManualAuth) {
+    console.error("[NTSB Sync] Unauthorized request - missing cron header or invalid auth");
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  console.log(`[NTSB Sync] Starting sync - triggered by ${isVercelCron ? 'Vercel Cron' : 'Manual'}`);
 
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL || process.env.POSTGRES_URL,
@@ -51,18 +62,20 @@ export async function GET(request: Request) {
   });
 
   try {
-    console.log(`[NTSB Sync] Fetching RSS feed`);
+    console.log(`[NTSB Sync] Fetching RSS feed from ${NTSB_RSS}`);
 
     // Fetch the RSS feed
     const response = await fetch(NTSB_RSS, {
-      headers: { "User-Agent": "AviationSafetyWatch/1.0" }
+      headers: { "User-Agent": "AviationSafetyWatch/1.0" },
+      cache: "no-store"
     });
 
     if (!response.ok) {
-      throw new Error(`RSS feed error: ${response.status}`);
+      throw new Error(`RSS feed error: ${response.status} ${response.statusText}`);
     }
 
     const xmlText = await response.text();
+    console.log(`[NTSB Sync] RSS feed fetched, length: ${xmlText.length} characters`);
     
     // Clean up the XML to handle malformed attributes
     const cleanedXml = xmlText
@@ -156,6 +169,7 @@ export async function GET(request: Request) {
     const summary = {
       success: true,
       timestamp: new Date().toISOString(),
+      triggeredBy: isVercelCron ? "Vercel Cron" : "Manual",
       rssItemsFound: items.length,
       newRecordsInserted: newRecords,
       skipped,
@@ -170,7 +184,11 @@ export async function GET(request: Request) {
     await pool.end();
     console.error("[NTSB Sync] Error:", error);
     return NextResponse.json(
-      { error: error.message, timestamp: new Date().toISOString() },
+      { 
+        error: error.message, 
+        timestamp: new Date().toISOString(),
+        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      },
       { status: 500 }
     );
   }
