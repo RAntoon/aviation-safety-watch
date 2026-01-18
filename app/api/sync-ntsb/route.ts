@@ -189,14 +189,25 @@ export async function GET(request: Request) {
         console.log(`[NTSB Sync] ✓ Inserted ${ntsbNumber}`);
 
       } catch (err: any) {
-        console.error(`[NTSB Sync] Failed to process accident:`, err.message);
+        console.error(`[NTSB Sync] Failed to process accident:`, err.message, err);
         failed++;
+        
+        // Store first few errors to return in response
+        if (failed <= 3 && !summary.errors) {
+          summary.errors = [];
+        }
+        if (failed <= 3) {
+          summary.errors.push({
+            ntsbNumber: getFieldValue(result?.Fields, "NtsbNo"),
+            error: err.message
+          });
+        }
       }
     }
 
     await pool.end();
 
-    const summary = {
+    const summary: any = {
       success: true,
       timestamp: new Date().toISOString(),
       triggeredBy: isVercelCron ? "Vercel Cron" : "Manual",
@@ -206,6 +217,7 @@ export async function GET(request: Request) {
       skipped,
       geocoded,
       failed,
+      errors: [] as any[]
     };
 
     console.log("[NTSB Sync] Complete:", summary);
