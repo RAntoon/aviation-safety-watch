@@ -27,40 +27,6 @@ async function geocode(city?: string, state?: string, country?: string) {
   return null;
 }
 
-// Extract event ID from NTSB URL
-function extractEventId(link: string): string | null {
-  const match = link.match(/ev_id=(\d+)/);
-  return match ? match[1] : null;
-}
-
-// Parse RSS feed manually (more robust than XML parser)
-function parseRSS(xmlText: string) {
-  const items: any[] = [];
-  
-  // Split by <item> tags
-  const itemMatches = xmlText.match(/<item>([\s\S]*?)<\/item>/gi);
-  
-  if (!itemMatches) {
-    console.log("[NTSB Sync] No items found in RSS");
-    return items;
-  }
-  
-  for (const itemText of itemMatches) {
-    try {
-      const title = itemText.match(/<title>([\s\S]*?)<\/title>/i)?.[1]?.trim() || "";
-      const link = itemText.match(/<link>([\s\S]*?)<\/link>/i)?.[1]?.trim() || "";
-      const description = itemText.match(/<description>([\s\S]*?)<\/description>/i)?.[1]?.trim() || "";
-      const pubDate = itemText.match(/<pubDate>([\s\S]*?)<\/pubDate>/i)?.[1]?.trim() || "";
-      
-      items.push({ title, link, description, pubDate });
-    } catch (err) {
-      console.error("[NTSB Sync] Failed to parse item:", err);
-    }
-  }
-  
-  return items;
-}
-
 export async function GET(request: Request) {
   // Verify this is a legitimate request
   const authHeader = request.headers.get("authorization");
@@ -82,39 +48,56 @@ export async function GET(request: Request) {
   });
 
   try {
-    const NTSB_RSS = "https://www.ntsb.gov/_layouts/ntsb.aviation/RSS.aspx";
-    console.log(`[NTSB Sync] Fetching RSS feed from ${NTSB_RSS}`);
+    // Calculate date 30 days ago
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const startDate = thirtyDaysAgo.toISOString().split('T')[0];
+    
+    console.log(`[NTSB Sync] Querying NTSB API for accidents since ${startDate}`);
 
-    // Fetch the RSS feed
-    const response = await fetch(NTSB_RSS, {
-      headers: { "User-Agent": "AviationSafetyWatch/1.0" },
-      cache: "no-store"
+    // Query NTSB Carol API for recent accidents
+    const apiUrl = `https://data.ntsb.gov/carol-main-public/api/Query/Main`;
+    
+    const requestBody = {
+      "EventDateFrom": startDate,
+      "EventDateTo": new Date().toISOString().split('T')[0],
+      "InvestigationType": "Aviation",
+      "PageSize": 500,
+      "PageNumber": 1,
+      "SortColumn": "EventDate",
+      "SortDirection": "desc"
+    };
+
+    console.log("[NTSB Sync] Request body:", JSON.stringify(requestBody));
+
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'AviationSafetyWatch/1.0'
+      },
+      body: JSON.stringify(requestBody)
     });
 
     if (!response.ok) {
-      throw new Error(`RSS feed error: ${response.status} ${response.statusText}`);
+      throw new Error(`NTSB API error: ${response.status} ${response.statusText}`);
     }
 
-    const xmlText = await response.text();
-    console.log(`[NTSB Sync] RSS feed fetched, length: ${xmlText.length} characters`);
+    const data = await response.json();
+    const accidents = data.Data || [];
     
-    // Parse RSS manually (more robust)
-    const items = parseRSS(xmlText);
-    console.log(`[NTSB Sync] Found ${items.length} items in RSS feed`);
+    console.log(`[NTSB Sync] NTSB API returned ${accidents.length} accidents`);
 
     let newRecords = 0;
     let geocoded = 0;
     let failed = 0;
     let skipped = 0;
 
-    for (const item of items) {
+    for (const accident of accidents) {
       try {
-        const { title, link, description, pubDate } = item;
-
-        const eventId = extractEventId(link);
+        const eventId = accident.ev_id?.toString();
         
         if (!eventId) {
-          console.log(`[NTSB Sync] No event ID found in: ${link}`);
           skipped++;
           continue;
         }
@@ -130,48 +113,54 @@ export async function GET(request: Request) {
           continue;
         }
 
-        // Parse location from title (format: "Location: City, ST")
-        const locationMatch = title.match(/Location:\s*([^,]+),\s*([A-Z]{2})/);
-        const city = locationMatch?.[1]?.trim();
-        const state = locationMatch?.[2]?.trim();
+        console.log(`[NTSB Sync] New accident found: ${eventId} - ${accident.ev_city}, ${accident.ev_state}`);
 
-        // Parse date from pubDate
-        const eventDate = pubDate ? new Date(pubDate).toISOString().split('T')[0] : null;
+        // Geocode if we don't have coordinates
+        let coords = null;
+        if (!accident.latitude || !accident.longitude) {
+          coords = await geocode(accident.ev_city, accident.ev_state, accident.ev_country);
+          if (coords) {
+            await new Promise((resolve) => setTimeout(resolve, 1000)); // Rate limit
+          }
+        }
 
-        // Geocode the location
-        const coords = await geocode(city, state, "USA");
-
-        // Insert new record with basic info from RSS
+        // Insert new record
         await pool.query(
           `INSERT INTO accidents (
-            event_id, event_date, event_type,
-            city, state, country, latitude, longitude,
-            prelim_narrative
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+            event_id, ntsb_number, event_date, event_type,
+            highest_injury, city, state, country,
+            latitude, longitude, fatal_count,
+            aircraft_make, aircraft_model, registration_number,
+            prelim_narrative, factual_narrative, analysis_narrative
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
           [
             eventId,
-            eventDate,
-            "Accident", // Default type
-            city || null,
-            state || null,
-            "USA",
-            coords?.latitude || null,
-            coords?.longitude || null,
-            description || null,
+            accident.ntsbNumber || null,
+            accident.ev_date || null,
+            accident.ev_type || null,
+            accident.inj_highest || null,
+            accident.ev_city || null,
+            accident.ev_state || null,
+            accident.ev_country || "USA",
+            coords?.latitude || accident.latitude || null,
+            coords?.longitude || accident.longitude || null,
+            accident.inj_f_grnd || 0,
+            accident.acft_make || null,
+            accident.acft_model || null,
+            accident.regis_no || null,
+            accident.narr_prelim || null,
+            accident.narr_factual || null,
+            accident.narr_analysis || null,
           ]
         );
 
         newRecords++;
         if (coords) geocoded++;
         
-        console.log(`[NTSB Sync] ✓ Inserted ${eventId} - ${city}, ${state}`);
+        console.log(`[NTSB Sync] ✓ Inserted ${eventId}`);
 
-        // Rate limit: wait 1 second between geocoding requests
-        if (coords) {
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-        }
-      } catch (err) {
-        console.error(`[NTSB Sync] Failed to process item:`, err);
+      } catch (err: any) {
+        console.error(`[NTSB Sync] Failed to process accident:`, err.message);
         failed++;
       }
     }
@@ -182,7 +171,8 @@ export async function GET(request: Request) {
       success: true,
       timestamp: new Date().toISOString(),
       triggeredBy: isVercelCron ? "Vercel Cron" : "Manual",
-      rssItemsFound: items.length,
+      dateRange: `${startDate} to ${new Date().toISOString().split('T')[0]}`,
+      accidentsFromAPI: accidents.length,
       newRecordsInserted: newRecords,
       skipped,
       geocoded,
