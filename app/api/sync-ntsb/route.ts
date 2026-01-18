@@ -52,35 +52,34 @@ export async function GET(request: Request) {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const startDate = thirtyDaysAgo.toISOString().split('T')[0];
-    const endDate = new Date().toISOString().split('T')[0];
     
-    console.log(`[NTSB Sync] Querying NTSB API for accidents from ${startDate} to ${endDate}`);
+    console.log(`[NTSB Sync] Querying NTSB API for accidents since ${startDate}`);
 
-    // Query NTSB Carol API with proper format
+    // Query NTSB Carol API with the CORRECT format (copied from working browser request)
     const apiUrl = `https://data.ntsb.gov/carol-main-public/api/Query/Main`;
     
     const requestBody = {
-      "QueryTitle": "Aviation Safety Watch Daily Sync",
-      "QueryType": "Main",
-      "Mode": "Full",
-      "EventDateFrom": startDate,
-      "EventDateTo": endDate,
-      "InvestigationType": "Aviation",
-      "AndOr": "and",
+      "ResultSetSize": 500,
+      "ResultSetOffset": 0,
       "QueryGroups": [
         {
-          "AndOr": "and",
           "QueryRules": [
             {
-              "Field": "ev_type",
-              "Operator": "contains",
-              "Value": ""
+              "FieldName": "EventDate",
+              "RuleType": 0,
+              "Values": [startDate],
+              "Columns": ["Event.EventDate"],
+              "Operator": "is greater than"
             }
-          ]
+          ],
+          "AndOr": "And"
         }
       ],
-      "PageSize": 500,
-      "PageNumber": 1
+      "AndOr": "And",
+      "SortColumn": null,
+      "SortDescending": true,
+      "TargetCollection": "cases",
+      "SessionId": Math.floor(Math.random() * 100000)
     };
 
     console.log("[NTSB Sync] Request body:", JSON.stringify(requestBody));
@@ -89,6 +88,7 @@ export async function GET(request: Request) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Accept': 'application/json',
         'User-Agent': 'AviationSafetyWatch/1.0'
       },
       body: JSON.stringify(requestBody)
@@ -187,7 +187,7 @@ export async function GET(request: Request) {
       success: true,
       timestamp: new Date().toISOString(),
       triggeredBy: isVercelCron ? "Vercel Cron" : "Manual",
-      dateRange: `${startDate} to ${endDate}`,
+      dateRangeStart: startDate,
       totalFromAPI: data.TotalRecords || 0,
       accidentsReceived: accidents.length,
       newRecordsInserted: newRecords,
