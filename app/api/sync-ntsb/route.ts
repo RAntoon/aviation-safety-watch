@@ -59,6 +59,20 @@ export async function GET(request: Request) {
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const startDate = thirtyDaysAgo.toISOString().split('T')[0];
     
+    // Initialize summary early so it can be used in error handling
+    const summary: any = {
+      success: true,
+      timestamp: new Date().toISOString(),
+      triggeredBy: isVercelCron ? "Vercel Cron" : "Manual",
+      dateRangeStart: startDate,
+      accidentsFromAPI: 0,
+      newRecordsInserted: 0,
+      skipped: 0,
+      geocoded: 0,
+      failed: 0,
+      errors: [] as any[]
+    };
+    
     console.log(`[NTSB Sync] Querying NTSB API for accidents since ${startDate}`);
 
     const apiUrl = `https://data.ntsb.gov/carol-main-public/api/Query/Main`;
@@ -207,18 +221,12 @@ export async function GET(request: Request) {
 
     await pool.end();
 
-    const summary: any = {
-      success: true,
-      timestamp: new Date().toISOString(),
-      triggeredBy: isVercelCron ? "Vercel Cron" : "Manual",
-      dateRangeStart: startDate,
-      accidentsFromAPI: results.length,
-      newRecordsInserted: newRecords,
-      skipped,
-      geocoded,
-      failed,
-      errors: [] as any[]
-    };
+    // Update final summary values
+    summary.accidentsFromAPI = results.length;
+    summary.newRecordsInserted = newRecords;
+    summary.skipped = skipped;
+    summary.geocoded = geocoded;
+    summary.failed = failed;
 
     console.log("[NTSB Sync] Complete:", summary);
 
