@@ -1,10 +1,5 @@
 import { NextResponse } from "next/server";
 import { Pool } from "pg";
-import { parseString } from "xml2js";
-import { promisify } from "util";
-
-const parseXML = promisify(parseString);
-const NTSB_RSS = "https://www.ntsb.gov/_layouts/ntsb.aviation/RSS.aspx";
 
 // Helper function to geocode an address
 async function geocode(city?: string, state?: string, country?: string) {
@@ -38,19 +33,44 @@ function extractEventId(link: string): string | null {
   return match ? match[1] : null;
 }
 
+// Parse RSS feed manually (more robust than XML parser)
+function parseRSS(xmlText: string) {
+  const items: any[] = [];
+  
+  // Split by <item> tags
+  const itemMatches = xmlText.match(/<item>([\s\S]*?)<\/item>/gi);
+  
+  if (!itemMatches) {
+    console.log("[NTSB Sync] No items found in RSS");
+    return items;
+  }
+  
+  for (const itemText of itemMatches) {
+    try {
+      const title = itemText.match(/<title>([\s\S]*?)<\/title>/i)?.[1]?.trim() || "";
+      const link = itemText.match(/<link>([\s\S]*?)<\/link>/i)?.[1]?.trim() || "";
+      const description = itemText.match(/<description>([\s\S]*?)<\/description>/i)?.[1]?.trim() || "";
+      const pubDate = itemText.match(/<pubDate>([\s\S]*?)<\/pubDate>/i)?.[1]?.trim() || "";
+      
+      items.push({ title, link, description, pubDate });
+    } catch (err) {
+      console.error("[NTSB Sync] Failed to parse item:", err);
+    }
+  }
+  
+  return items;
+}
+
 export async function GET(request: Request) {
-  // Verify this is a legitimate Vercel cron request
+  // Verify this is a legitimate request
   const authHeader = request.headers.get("authorization");
   const cronHeader = request.headers.get("x-vercel-cron");
   
-  // Accept either:
-  // 1. Vercel's cron header (automatic cron jobs)
-  // 2. Manual authorization with CRON_SECRET (for trigger-sync wrapper)
   const isVercelCron = cronHeader === "true";
   const isManualAuth = authHeader === `Bearer ${process.env.CRON_SECRET}`;
   
   if (!isVercelCron && !isManualAuth) {
-    console.error("[NTSB Sync] Unauthorized request - missing cron header or invalid auth");
+    console.error("[NTSB Sync] Unauthorized request");
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -62,6 +82,7 @@ export async function GET(request: Request) {
   });
 
   try {
+    const NTSB_RSS = "https://www.ntsb.gov/_layouts/ntsb.aviation/RSS.aspx";
     console.log(`[NTSB Sync] Fetching RSS feed from ${NTSB_RSS}`);
 
     // Fetch the RSS feed
@@ -77,14 +98,8 @@ export async function GET(request: Request) {
     const xmlText = await response.text();
     console.log(`[NTSB Sync] RSS feed fetched, length: ${xmlText.length} characters`);
     
-    // Clean up the XML to handle malformed attributes
-    const cleanedXml = xmlText
-      .replace(/\s+(?=>)/g, '') // Remove whitespace before >
-      .replace(/=\s*>/g, '="">'); // Fix empty attributes
-    
-    const parsed: any = await parseXML(cleanedXml);
-    
-    const items = parsed?.rss?.channel?.[0]?.item || [];
+    // Parse RSS manually (more robust)
+    const items = parseRSS(xmlText);
     console.log(`[NTSB Sync] Found ${items.length} items in RSS feed`);
 
     let newRecords = 0;
@@ -94,10 +109,7 @@ export async function GET(request: Request) {
 
     for (const item of items) {
       try {
-        const title = item.title?.[0] || "";
-        const link = item.link?.[0] || "";
-        const description = item.description?.[0] || "";
-        const pubDate = item.pubDate?.[0] || "";
+        const { title, link, description, pubDate } = item;
 
         const eventId = extractEventId(link);
         
