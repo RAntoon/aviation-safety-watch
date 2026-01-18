@@ -69,9 +69,7 @@ export async function GET(request: Request) {
       "AndOr": "and",
       "QueryFieldGroups": [],
       "PageSize": 500,
-      "PageNumber": 1,
-      "SortColumn": "ev_date",  // Changed from EventDate to ev_date
-      "SortDirection": "desc"
+      "PageNumber": 1
     };
 
     console.log("[NTSB Sync] Request body:", JSON.stringify(requestBody));
