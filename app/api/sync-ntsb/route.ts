@@ -187,7 +187,7 @@ export async function GET(request: Request) {
             eventType || null,
             highestInjury || null,
             city || null,
-            state || null,
+            state || null,  // Full state value
             country || "USA",
             coords?.latitude || null,
             coords?.longitude || null,
