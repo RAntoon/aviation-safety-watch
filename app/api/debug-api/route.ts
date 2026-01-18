@@ -6,49 +6,56 @@ export async function GET() {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const startDate = thirtyDaysAgo.toISOString().split('T')[0];
-    const endDate = new Date().toISOString().split('T')[0];
     
-    console.log(`Querying NTSB API from ${startDate} to ${endDate}`);
+    console.log(`Querying NTSB API from ${startDate}`);
 
     const apiUrl = `https://data.ntsb.gov/carol-main-public/api/Query/Main`;
     
     const requestBody = {
-      "EventDateFrom": startDate,
-      "EventDateTo": endDate,
-      "InvestigationType": "Aviation",
-      "PageSize": 500,
-      "PageNumber": 1,
-      "SortColumn": "EventDate",
-      "SortDirection": "desc"
+      "ResultSetSize": 500,
+      "ResultSetOffset": 0,
+      "QueryGroups": [
+        {
+          "QueryRules": [
+            {
+              "FieldName": "EventDate",
+              "RuleType": 0,
+              "Values": [startDate],
+              "Columns": ["Event.EventDate"],
+              "Operator": "is greater than"
+            }
+          ],
+          "AndOr": "And"
+        }
+      ],
+      "AndOr": "And",
+      "SortColumn": null,
+      "SortDescending": true,
+      "TargetCollection": "cases",
+      "SessionId": Math.floor(Math.random() * 100000)
     };
 
     const response = await fetch(apiUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Accept': 'application/json',
         'User-Agent': 'AviationSafetyWatch/1.0'
       },
       body: JSON.stringify(requestBody)
     });
 
-    const responseText = await response.text();
-    
-    let parsedData;
-    try {
-      parsedData = JSON.parse(responseText);
-    } catch (e) {
-      parsedData = null;
-    }
+    const data = await response.json();
 
     return NextResponse.json({
       success: response.ok,
       status: response.status,
-      dateRange: `${startDate} to ${endDate}`,
+      dateRangeStart: startDate,
       requestBody: requestBody,
-      responsePreview: responseText.substring(0, 2000),
-      parsedData: parsedData,
-      dataCount: parsedData?.Data?.length || 0,
-      totalRecords: parsedData?.TotalRecords || 0
+      totalRecords: data.TotalRecords || 0,
+      dataCount: data.Data?.length || 0,
+      firstFewRecords: data.Data?.slice(0, 3) || [],
+      fullResponse: data
     });
   } catch (error: any) {
     return NextResponse.json({
