@@ -52,16 +52,22 @@ export async function GET(request: Request) {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const startDate = thirtyDaysAgo.toISOString().split('T')[0];
+    const endDate = new Date().toISOString().split('T')[0];
     
-    console.log(`[NTSB Sync] Querying NTSB API for accidents since ${startDate}`);
+    console.log(`[NTSB Sync] Querying NTSB API for accidents from ${startDate} to ${endDate}`);
 
-    // Query NTSB Carol API for recent accidents
+    // Query NTSB Carol API with proper format
     const apiUrl = `https://data.ntsb.gov/carol-main-public/api/Query/Main`;
     
     const requestBody = {
+      "QueryTitle": "Aviation Safety Watch Daily Sync",
+      "QueryType": "Main",
+      "Mode": "Full",
       "EventDateFrom": startDate,
-      "EventDateTo": new Date().toISOString().split('T')[0],
+      "EventDateTo": endDate,
       "InvestigationType": "Aviation",
+      "AndOr": "and",
+      "QueryFieldGroups": [],
       "PageSize": 500,
       "PageNumber": 1,
       "SortColumn": "EventDate",
@@ -80,13 +86,14 @@ export async function GET(request: Request) {
     });
 
     if (!response.ok) {
-      throw new Error(`NTSB API error: ${response.status} ${response.statusText}`);
+      const errorText = await response.text();
+      throw new Error(`NTSB API error: ${response.status} - ${errorText}`);
     }
 
     const data = await response.json();
     const accidents = data.Data || [];
     
-    console.log(`[NTSB Sync] NTSB API returned ${accidents.length} accidents`);
+    console.log(`[NTSB Sync] NTSB API returned ${accidents.length} accidents (Total: ${data.TotalRecords || 0})`);
 
     let newRecords = 0;
     let geocoded = 0;
@@ -171,8 +178,9 @@ export async function GET(request: Request) {
       success: true,
       timestamp: new Date().toISOString(),
       triggeredBy: isVercelCron ? "Vercel Cron" : "Manual",
-      dateRange: `${startDate} to ${new Date().toISOString().split('T')[0]}`,
-      accidentsFromAPI: accidents.length,
+      dateRange: `${startDate} to ${endDate}`,
+      totalFromAPI: data.TotalRecords || 0,
+      accidentsReceived: accidents.length,
       newRecordsInserted: newRecords,
       skipped,
       geocoded,
