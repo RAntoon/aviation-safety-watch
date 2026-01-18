@@ -67,7 +67,12 @@ export async function GET(request: Request) {
       "EventDateTo": endDate,
       "InvestigationType": "Aviation",
       "AndOr": "and",
-      "QueryGroups": [],
+      "QueryGroups": [
+        {
+          "AndOr": "and",
+          "QueryRules": []
+        }
+      ],
       "PageSize": 500,
       "PageNumber": 1
     };
