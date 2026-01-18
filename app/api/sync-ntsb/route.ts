@@ -70,7 +70,7 @@ export async function GET(request: Request) {
       "QueryFieldGroups": [],
       "PageSize": 500,
       "PageNumber": 1,
-      "SortColumn": "EventDate",
+      "SortColumn": "ev_date",  // Changed from EventDate to ev_date
       "SortDirection": "desc"
     };
 
