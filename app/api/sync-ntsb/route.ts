@@ -70,7 +70,13 @@ export async function GET(request: Request) {
       "QueryGroups": [
         {
           "AndOr": "and",
-          "QueryRules": []
+          "QueryRules": [
+            {
+              "Field": "ev_type",
+              "Operator": "contains",
+              "Value": ""
+            }
+          ]
         }
       ],
       "PageSize": 500,
