@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { Pool } from "pg";
 
+// Helper function to extract field value from NTSB's weird format
+function getFieldValue(fields: any[], fieldName: string): any {
+  const field = fields.find((f: any) => f.FieldName === fieldName);
+  return field?.Values?.[0] || null;
+}
+
 // Helper function to geocode an address
 async function geocode(city?: string, state?: string, country?: string) {
   if (!city && !state) return null;
@@ -55,7 +61,6 @@ export async function GET(request: Request) {
     
     console.log(`[NTSB Sync] Querying NTSB API for accidents since ${startDate}`);
 
-    // Query NTSB Carol API with the CORRECT format (copied from working browser request)
     const apiUrl = `https://data.ntsb.gov/carol-main-public/api/Query/Main`;
     
     const requestBody = {
@@ -100,28 +105,41 @@ export async function GET(request: Request) {
     }
 
     const data = await response.json();
-    const accidents = data.Data || [];
+    const results = data.Results || [];
     
-    console.log(`[NTSB Sync] NTSB API returned ${accidents.length} accidents (Total: ${data.TotalRecords || 0})`);
+    console.log(`[NTSB Sync] NTSB API returned ${results.length} accidents`);
 
     let newRecords = 0;
     let geocoded = 0;
     let failed = 0;
     let skipped = 0;
 
-    for (const accident of accidents) {
+    for (const result of results) {
       try {
-        const eventId = accident.ev_id?.toString();
+        const fields = result.Fields || [];
         
-        if (!eventId) {
+        // Extract data from the weird Fields array format
+        const ntsbNumber = getFieldValue(fields, "NtsbNo");
+        const eventDate = getFieldValue(fields, "EventDate");
+        const city = getFieldValue(fields, "City");
+        const state = getFieldValue(fields, "State");
+        const country = getFieldValue(fields, "Country");
+        const registrationNumber = getFieldValue(fields, "N#");
+        const vehicleMake = getFieldValue(fields, "VehicleMake");
+        const vehicleModel = getFieldValue(fields, "VehicleModel");
+        const highestInjury = getFieldValue(fields, "HighestInjuryLevel");
+        const eventType = getFieldValue(fields, "EventType");
+        const mkey = getFieldValue(fields, "Mkey");
+        
+        if (!ntsbNumber) {
           skipped++;
           continue;
         }
 
-        // Check if already exists
+        // Check if already exists by NTSB number
         const existing = await pool.query(
-          "SELECT event_id FROM accidents WHERE event_id = $1",
-          [eventId]
+          "SELECT ntsb_number FROM accidents WHERE ntsb_number = $1",
+          [ntsbNumber]
         );
 
         if (existing.rows.length > 0) {
@@ -129,51 +147,46 @@ export async function GET(request: Request) {
           continue;
         }
 
-        console.log(`[NTSB Sync] New accident found: ${eventId} - ${accident.ev_city}, ${accident.ev_state}`);
+        console.log(`[NTSB Sync] New accident found: ${ntsbNumber} - ${city}, ${state}`);
 
-        // Geocode if we don't have coordinates
-        let coords = null;
-        if (!accident.latitude || !accident.longitude) {
-          coords = await geocode(accident.ev_city, accident.ev_state, accident.ev_country);
-          if (coords) {
-            await new Promise((resolve) => setTimeout(resolve, 1000)); // Rate limit
-          }
+        // Geocode the location
+        const coords = await geocode(city, state, country);
+        if (coords) {
+          await new Promise((resolve) => setTimeout(resolve, 1000)); // Rate limit
         }
+
+        // Parse event date
+        const parsedDate = eventDate ? new Date(eventDate).toISOString().split('T')[0] : null;
 
         // Insert new record
         await pool.query(
           `INSERT INTO accidents (
-            event_id, ntsb_number, event_date, event_type,
+            ntsb_number, event_id, event_date, event_type,
             highest_injury, city, state, country,
-            latitude, longitude, fatal_count,
-            aircraft_make, aircraft_model, registration_number,
-            prelim_narrative, factual_narrative, analysis_narrative
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+            latitude, longitude,
+            aircraft_make, aircraft_model, registration_number
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
           [
-            eventId,
-            accident.ntsbNumber || null,
-            accident.ev_date || null,
-            accident.ev_type || null,
-            accident.inj_highest || null,
-            accident.ev_city || null,
-            accident.ev_state || null,
-            accident.ev_country || "USA",
-            coords?.latitude || accident.latitude || null,
-            coords?.longitude || accident.longitude || null,
-            accident.inj_f_grnd || 0,
-            accident.acft_make || null,
-            accident.acft_model || null,
-            accident.regis_no || null,
-            accident.narr_prelim || null,
-            accident.narr_factual || null,
-            accident.narr_analysis || null,
+            ntsbNumber,
+            mkey || null,  // Using Mkey as event_id
+            parsedDate,
+            eventType || null,
+            highestInjury || null,
+            city || null,
+            state || null,
+            country || "USA",
+            coords?.latitude || null,
+            coords?.longitude || null,
+            vehicleMake || null,
+            vehicleModel || null,
+            registrationNumber || null,
           ]
         );
 
         newRecords++;
         if (coords) geocoded++;
         
-        console.log(`[NTSB Sync] ✓ Inserted ${eventId}`);
+        console.log(`[NTSB Sync] ✓ Inserted ${ntsbNumber}`);
 
       } catch (err: any) {
         console.error(`[NTSB Sync] Failed to process accident:`, err.message);
@@ -188,8 +201,7 @@ export async function GET(request: Request) {
       timestamp: new Date().toISOString(),
       triggeredBy: isVercelCron ? "Vercel Cron" : "Manual",
       dateRangeStart: startDate,
-      totalFromAPI: data.TotalRecords || 0,
-      accidentsReceived: accidents.length,
+      accidentsFromAPI: results.length,
       newRecordsInserted: newRecords,
       skipped,
       geocoded,
