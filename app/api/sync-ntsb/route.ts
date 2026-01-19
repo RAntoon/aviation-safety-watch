@@ -170,7 +170,17 @@ export async function GET(request: Request) {
         }
 
         // Parse event date
-        const parsedDate = eventDate ? new Date(eventDate).toISOString().split('T')[0] : null;
+let parsedDate = eventDate ? new Date(eventDate).toISOString().split('T')[0] : null;
+
+// Validate date is not in the future (filter out bad NTSB data)
+if (parsedDate) {
+  const today = new Date().toISOString().split('T')[0];
+  if (parsedDate > today) {
+    console.log(`[NTSB Sync] ⚠️ Skipping ${ntsbNumber} - future date: ${parsedDate}`);
+    skipped++;
+    continue;
+  }
+}
 
         // Insert new record
         await pool.query(
