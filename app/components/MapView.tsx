@@ -135,22 +135,37 @@ export default function MapView() {
   const [loading, setLoading] = useState<boolean>(false);
   const [isPanelOpen, setIsPanelOpen] = useState(true);
   const [expandedPopups, setExpandedPopups] = useState<Set<string>>(new Set());
+  const [searchTerm, setSearchTerm] = useState<string>("");
 
   const center: LatLngExpression = useMemo(() => [39.5, -98.35], []); // US-centered default
+
+  // Filter points based on search term (matches Data View logic)
+  const filteredPoints = useMemo(() => {
+    if (!searchTerm) return points;
+    
+    const search = searchTerm.toLowerCase();
+    return points.filter((p) => 
+      p.ntsbCaseId?.toLowerCase().includes(search) ||
+      p.city?.toLowerCase().includes(search) ||
+      p.state?.toLowerCase().includes(search) ||
+      p.aircraftType?.toLowerCase().includes(search) ||
+      p.registrationNumber?.toLowerCase().includes(search)
+    );
+  }, [points, searchTerm]);
 
 const counts = useMemo(() => {
     let fatal = 0,
       accident = 0,
       incident = 0,
       occurrence = 0;
-    for (const p of points) {
+    for (const p of filteredPoints) {
       if (p.kind === "fatal") fatal++;
       else if (p.kind === "accident") accident++;
       else if (p.kind === "incident") incident++;
       else if (p.kind === "occurrence") occurrence++;
     }
-    return { fatal, accident, incident, occurrence, total: points.length };
-  }, [points]);
+    return { fatal, accident, incident, occurrence, total: filteredPoints.length };
+  }, [filteredPoints]);
 
   async function load() {
     setLoading(true);
@@ -282,6 +297,103 @@ const counts = useMemo(() => {
           </div>
         </div>
 
+        {/* Quick date range filters */}
+        <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <button
+            onClick={() => {
+              const end = new Date();
+              const start = new Date(end);
+              start.setDate(end.getDate() - 7);
+              setStart(isoDate(start));
+              setEnd(isoDate(end));
+              setTimeout(() => load(), 0);
+            }}
+            disabled={loading}
+            style={{
+              padding: "6px 10px",
+              borderRadius: 8,
+              border: "1px solid #ddd",
+              background: loading ? "#f4f4f4" : "#fff",
+              cursor: loading ? "not-allowed" : "pointer",
+              fontSize: 12,
+              fontWeight: 600,
+            }}
+          >
+            Last Week
+          </button>
+
+          <button
+            onClick={() => {
+              const end = new Date();
+              const start = new Date(end);
+              start.setMonth(end.getMonth() - 1);
+              setStart(isoDate(start));
+              setEnd(isoDate(end));
+              setTimeout(() => load(), 0);
+            }}
+            disabled={loading}
+            style={{
+              padding: "6px 10px",
+              borderRadius: 8,
+              border: "1px solid #ddd",
+              background: loading ? "#f4f4f4" : "#fff",
+              cursor: loading ? "not-allowed" : "pointer",
+              fontSize: 12,
+              fontWeight: 600,
+            }}
+          >
+            Last Month
+          </button>
+
+          <button
+            onClick={() => {
+              const end = new Date();
+              const start = new Date(end);
+              start.setFullYear(end.getFullYear() - 1);
+              setStart(isoDate(start));
+              setEnd(isoDate(end));
+              setTimeout(() => load(), 0);
+            }}
+            disabled={loading}
+            style={{
+              padding: "6px 10px",
+              borderRadius: 8,
+              border: "1px solid #ddd",
+              background: loading ? "#f4f4f4" : "#fff",
+              cursor: loading ? "not-allowed" : "pointer",
+              fontSize: 12,
+              fontWeight: 600,
+            }}
+          >
+            Last Year
+          </button>
+        </div>
+
+        {/* Search box - same as Data View */}
+        {points.length > 0 && (
+          <div style={{ marginTop: 10 }}>
+            <input
+              type="text"
+              placeholder="Search by NTSB#, location, aircraft..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "8px 12px",
+                borderRadius: 8,
+                border: "1px solid #ddd",
+                fontSize: 13,
+                boxSizing: "border-box",
+              }}
+            />
+            {searchTerm && (
+              <div style={{ fontSize: 12, marginTop: 4, opacity: 0.7 }}>
+                Showing {counts.total} of {points.length} events
+              </div>
+            )}
+          </div>
+        )}
+
         <div style={{ marginTop: 12 }}>
           <div style={{ fontWeight: 800, marginBottom: 6 }}>Legend</div>
 
@@ -344,13 +456,6 @@ const counts = useMemo(() => {
               Occurrences (blue): <b>{counts.occurrence}</b>
             </div>
           </div>
-        </div>
-
-        <div style={{ marginTop: 10, fontSize: 12, lineHeight: 1.3 }}>
-          <b>Status:</b>{" "}
-          <span style={{ color: status.includes("not OK") || status.includes("failed") ? "#d32f2f" : "#222" }}>
-            {status}
-          </span>
         </div>
       </div>
 
@@ -424,7 +529,7 @@ const counts = useMemo(() => {
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
-        {points.map((p) => {
+        {filteredPoints.map((p) => {
           // Build title: "Accident/Incident [Tail Number] - [Aircraft Type]"
           const eventTypeLabel = 
             p.kind === "fatal" ? "Fatal Accident" :
