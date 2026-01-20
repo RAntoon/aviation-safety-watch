@@ -18,7 +18,7 @@ export async function POST(request: Request) {
 
     // Send email via Resend
     const { data, error } = await resend.emails.send({
-      from: "Aviation Safety Watch <onboarding@resend.dev>", // Resend's default sender for testing
+      from: "Aviation Safety Watch <noreply@antooncorp.com>",
       to: ["ryan@antooncorp.com"],
       subject: "Aviation Safety Watch - Contact Us",
       html: `
