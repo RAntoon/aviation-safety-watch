@@ -770,11 +770,11 @@ const counts = useMemo(() => {
           }
           
           .contact-button {
-            top: 220px !important;
-            right: 8px !important;
-            font-size: 12px !important;
-            padding: 8px 12px !important;
-          }
+  top: 12px !important;
+  right: 50% !important;
+  transform: translateX(50%) !important;
+  left: auto !important;
+}
         }
       `}</style>
     </div>
