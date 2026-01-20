@@ -136,22 +136,42 @@ export default function MapView() {
   const [isPanelOpen, setIsPanelOpen] = useState(true);
   const [expandedPopups, setExpandedPopups] = useState<Set<string>>(new Set());
   const [searchTerm, setSearchTerm] = useState<string>("");
+  
+  // Toggle filters for accident types (all enabled by default)
+  const [showFatal, setShowFatal] = useState<boolean>(true);
+  const [showAccident, setShowAccident] = useState<boolean>(true);
+  const [showIncident, setShowIncident] = useState<boolean>(true);
+  const [showOccurrence, setShowOccurrence] = useState<boolean>(true);
 
   const center: LatLngExpression = useMemo(() => [39.5, -98.35], []); // US-centered default
 
-  // Filter points based on search term (matches Data View logic)
+  // Filter points based on search term and type toggles
   const filteredPoints = useMemo(() => {
-    if (!searchTerm) return points;
+    let filtered = points;
     
-    const search = searchTerm.toLowerCase();
-    return points.filter((p) => 
-      p.ntsbCaseId?.toLowerCase().includes(search) ||
-      p.city?.toLowerCase().includes(search) ||
-      p.state?.toLowerCase().includes(search) ||
-      p.aircraftType?.toLowerCase().includes(search) ||
-      p.registrationNumber?.toLowerCase().includes(search)
-    );
-  }, [points, searchTerm]);
+    // Filter by search term
+    if (searchTerm) {
+      const search = searchTerm.toLowerCase();
+      filtered = filtered.filter((p) => 
+        p.ntsbCaseId?.toLowerCase().includes(search) ||
+        p.city?.toLowerCase().includes(search) ||
+        p.state?.toLowerCase().includes(search) ||
+        p.aircraftType?.toLowerCase().includes(search) ||
+        p.registrationNumber?.toLowerCase().includes(search)
+      );
+    }
+    
+    // Filter by accident type toggles
+    filtered = filtered.filter((p) => {
+      if (p.kind === "fatal" && !showFatal) return false;
+      if (p.kind === "accident" && !showAccident) return false;
+      if (p.kind === "incident" && !showIncident) return false;
+      if (p.kind === "occurrence" && !showOccurrence) return false;
+      return true;
+    });
+    
+    return filtered;
+  }, [points, searchTerm, showFatal, showAccident, showIncident, showOccurrence]);
 
 const counts = useMemo(() => {
     let fatal = 0,
@@ -395,9 +415,20 @@ const counts = useMemo(() => {
         )}
 
         <div style={{ marginTop: 12 }}>
-          <div style={{ fontWeight: 800, marginBottom: 6 }}>Legend</div>
+          <div style={{ fontWeight: 800, marginBottom: 6 }}>Legend (click to filter)</div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+          <div 
+            onClick={() => setShowFatal(!showFatal)}
+            style={{ 
+              display: "flex", 
+              alignItems: "center", 
+              gap: 10, 
+              marginBottom: 6,
+              cursor: "pointer",
+              opacity: showFatal ? 1 : 0.4,
+              transition: "opacity 0.2s"
+            }}
+          >
             <span
               style={{
                 width: 14,
@@ -405,6 +436,7 @@ const counts = useMemo(() => {
                 borderRadius: 7,
                 background: colorFor("fatal"),
                 display: "inline-block",
+                border: showFatal ? "2px solid #333" : "2px solid #ccc",
               }}
             />
             <div style={{ fontSize: 13 }}>
@@ -412,7 +444,18 @@ const counts = useMemo(() => {
             </div>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+          <div 
+            onClick={() => setShowAccident(!showAccident)}
+            style={{ 
+              display: "flex", 
+              alignItems: "center", 
+              gap: 10, 
+              marginBottom: 6,
+              cursor: "pointer",
+              opacity: showAccident ? 1 : 0.4,
+              transition: "opacity 0.2s"
+            }}
+          >
             <span
               style={{
                 width: 14,
@@ -420,6 +463,7 @@ const counts = useMemo(() => {
                 borderRadius: 7,
                 background: colorFor("accident"),
                 display: "inline-block",
+                border: showAccident ? "2px solid #333" : "2px solid #ccc",
               }}
             />
             <div style={{ fontSize: 13 }}>
@@ -427,7 +471,17 @@ const counts = useMemo(() => {
             </div>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div 
+            onClick={() => setShowIncident(!showIncident)}
+            style={{ 
+              display: "flex", 
+              alignItems: "center", 
+              gap: 10,
+              cursor: "pointer",
+              opacity: showIncident ? 1 : 0.4,
+              transition: "opacity 0.2s"
+            }}
+          >
             <span
               style={{
                 width: 14,
@@ -435,6 +489,7 @@ const counts = useMemo(() => {
                 borderRadius: 7,
                 background: colorFor("incident"),
                 display: "inline-block",
+                border: showIncident ? "2px solid #333" : "2px solid #ccc",
               }}
             />
             <div style={{ fontSize: 13 }}>
@@ -442,7 +497,18 @@ const counts = useMemo(() => {
             </div>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6 }}>
+          <div 
+            onClick={() => setShowOccurrence(!showOccurrence)}
+            style={{ 
+              display: "flex", 
+              alignItems: "center", 
+              gap: 10, 
+              marginTop: 6,
+              cursor: "pointer",
+              opacity: showOccurrence ? 1 : 0.4,
+              transition: "opacity 0.2s"
+            }}
+          >
             <span
               style={{
                 width: 14,
@@ -450,6 +516,7 @@ const counts = useMemo(() => {
                 borderRadius: 7,
                 background: colorFor("occurrence"),
                 display: "inline-block",
+                border: showOccurrence ? "2px solid #333" : "2px solid #ccc",
               }}
             />
             <div style={{ fontSize: 13 }}>
