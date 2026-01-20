@@ -5,6 +5,7 @@ import type { LatLngExpression } from "leaflet";
 import "leaflet/dist/leaflet.css";
 import * as RL from "react-leaflet";
 import ClockWidget from "./ClockWidget";
+import ContactModal from "./ContactModal";
 
 // ✅ Hard-stop the annoying TS mismatch in some Vercel builds.
 const MapContainer = RL.MapContainer as unknown as React.FC<any>;
@@ -142,6 +143,9 @@ export default function MapView() {
   const [showAccident, setShowAccident] = useState<boolean>(true);
   const [showIncident, setShowIncident] = useState<boolean>(true);
   const [showOccurrence, setShowOccurrence] = useState<boolean>(true);
+  
+  // Contact modal state
+  const [showContactModal, setShowContactModal] = useState<boolean>(false);
 
   const center: LatLngExpression = useMemo(() => [39.5, -98.35], []); // US-centered default
 
@@ -236,6 +240,43 @@ const counts = useMemo(() => {
   return (
     <div style={{ height: "100vh", width: "100vw", position: "relative" }}>
       <ClockWidget />
+
+      {/* Contact Us Button */}
+      <button
+        onClick={() => setShowContactModal(true)}
+        className="contact-button"
+        style={{
+          position: "absolute",
+          zIndex: 1000,
+          top: 155,
+          right: 12,
+          padding: "10px 16px",
+          borderRadius: 10,
+          border: "1px solid #ddd",
+          background: "rgba(255,255,255,0.95)",
+          boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+          fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
+          fontWeight: 700,
+          fontSize: 14,
+          cursor: "pointer",
+          transition: "all 0.2s ease",
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = "white";
+          e.currentTarget.style.boxShadow = "0 6px 16px rgba(0,0,0,0.2)";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = "rgba(255,255,255,0.95)";
+          e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.15)";
+        }}
+      >
+        Contact Us
+      </button>
+
+      <ContactModal 
+        isOpen={showContactModal} 
+        onClose={() => setShowContactModal(false)} 
+      />
 
       {/* Control panel */}
       <div
@@ -726,6 +767,13 @@ const counts = useMemo(() => {
 
           .panel-toggle {
             display: block !important;
+          }
+          
+          .contact-button {
+            top: 120px !important;
+            right: 8px !important;
+            font-size: 12px !important;
+            padding: 8px 12px !important;
           }
         }
       `}</style>
