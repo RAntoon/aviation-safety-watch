@@ -234,7 +234,8 @@ const counts = useMemo(() => {
 
   useEffect(() => {
     load();
-  }, [load]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div style={{ height: "100vh", width: "100vw", position: "relative" }}>
@@ -366,6 +367,8 @@ const counts = useMemo(() => {
               startDate.setDate(endDate.getDate() - 7);
               setStart(isoDate(startDate));
               setEnd(isoDate(endDate));
+              // Wait for state to update, then load
+              setTimeout(() => load(), 10);
             }}
             disabled={loading}
             style={{
@@ -388,6 +391,8 @@ const counts = useMemo(() => {
               startDate.setMonth(endDate.getMonth() - 1);
               setStart(isoDate(startDate));
               setEnd(isoDate(endDate));
+              // Wait for state to update, then load
+              setTimeout(() => load(), 10);
             }}
             disabled={loading}
             style={{
@@ -410,6 +415,8 @@ const counts = useMemo(() => {
               startDate.setFullYear(endDate.getFullYear() - 1);
               setStart(isoDate(startDate));
               setEnd(isoDate(endDate));
+              // Wait for state to update, then load
+              setTimeout(() => load(), 10);
             }}
             disabled={loading}
             style={{

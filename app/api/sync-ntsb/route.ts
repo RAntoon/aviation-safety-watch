@@ -56,7 +56,7 @@ export async function GET(request: Request) {
   try {
     // Calculate date 30 days ago
     const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 7);
     const startDate = thirtyDaysAgo.toISOString().split('T')[0];
     
     // Initialize summary early so it can be used in error handling
