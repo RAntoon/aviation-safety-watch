@@ -354,7 +354,7 @@ const counts = useMemo(() => {
           </button>
 
           <div style={{ fontSize: 12, opacity: 0.85 }}>
-            Events: <b>{points.length}</b>
+            Events: <b>{counts.total}</b>
           </div>
         </div>
 
@@ -770,11 +770,15 @@ const counts = useMemo(() => {
           }
           
           .contact-button {
-  top: 12px !important;
-  right: 50% !important;
-  transform: translateX(50%) !important;
-  left: auto !important;
-}
+            top: 12px !important;
+            right: 50% !important;
+            transform: translateX(50%) !important;
+            left: auto !important;
+          }
+          
+          .clock-widget {
+            display: none !important;
+          }
         }
       `}</style>
     </div>
