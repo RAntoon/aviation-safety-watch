@@ -112,16 +112,14 @@ export default function ClockWidget() {
 
       <style jsx global>{`
         @media (max-width: 768px) {
-          .clock-widget {
-            right: ${isOpen ? "12px" : "-200px"} !important;
-            top: 50% !important;
-            transform: translateY(-50%) !important;
-          }
+  .clock-widget {
+    display: none !important;
+  }
 
-          .clock-toggle {
-            display: block !important;
-          }
-        }
+  .clock-toggle {
+    display: none !important;
+  }
+}
 
         @media (min-width: 769px) {
           .clock-widget {
