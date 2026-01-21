@@ -354,7 +354,7 @@ const counts = useMemo(() => {
           </button>
 
           <div style={{ fontSize: 12, opacity: 0.85 }}>
-            Events: <b>{counts.total}</b>
+            Events: <b>{points.length}</b>
           </div>
         </div>
 
