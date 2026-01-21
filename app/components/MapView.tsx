@@ -182,14 +182,14 @@ const counts = useMemo(() => {
       accident = 0,
       incident = 0,
       occurrence = 0;
-    for (const p of filteredPoints) {
+    for (const p of points) {
       if (p.kind === "fatal") fatal++;
       else if (p.kind === "accident") accident++;
       else if (p.kind === "incident") incident++;
       else if (p.kind === "occurrence") occurrence++;
     }
     return { fatal, accident, incident, occurrence, total: filteredPoints.length };
-  }, [filteredPoints]);
+  }, [points, filteredPoints]);
 
   async function load() {
     setLoading(true);
@@ -248,7 +248,7 @@ const counts = useMemo(() => {
         style={{
           position: "absolute",
           zIndex: 1000,
-          top: 155,
+          top: 70,
           right: 12,
           padding: "10px 16px",
           borderRadius: 10,
@@ -270,7 +270,7 @@ const counts = useMemo(() => {
           e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.15)";
         }}
       >
-        Contact Us
+        📧 Contact Us
       </button>
 
       <ContactModal 
@@ -770,11 +770,11 @@ const counts = useMemo(() => {
           }
           
           .contact-button {
-  top: 12px !important;
-  right: 50% !important;
-  transform: translateX(50%) !important;
-  left: auto !important;
-}
+            top: 120px !important;
+            right: 8px !important;
+            font-size: 12px !important;
+            padding: 8px 12px !important;
+          }
         }
       `}</style>
     </div>
