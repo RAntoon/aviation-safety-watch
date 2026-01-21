@@ -3,7 +3,10 @@
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import type { LatLngExpression } from "leaflet";
 import "leaflet/dist/leaflet.css";
+import "leaflet.markercluster/dist/MarkerCluster.css";
+import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 import * as RL from "react-leaflet";
+import MarkerClusterGroup from "react-leaflet-markercluster";
 import ClockWidget from "./ClockWidget";
 import ContactModal from "./ContactModal";
 
