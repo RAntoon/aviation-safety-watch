@@ -248,7 +248,7 @@ const counts = useMemo(() => {
         style={{
           position: "absolute",
           zIndex: 1000,
-          top: 70,
+          top: 155,
           right: 12,
           padding: "10px 16px",
           borderRadius: 10,
@@ -270,7 +270,7 @@ const counts = useMemo(() => {
           e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.15)";
         }}
       >
-        📧 Contact Us
+        Contact Us
       </button>
 
       <ContactModal 
@@ -770,11 +770,11 @@ const counts = useMemo(() => {
           }
           
           .contact-button {
-            top: 120px !important;
-            right: 8px !important;
-            font-size: 12px !important;
-            padding: 8px 12px !important;
-          }
+  top: 12px !important;
+  right: 50% !important;
+  transform: translateX(50%) !important;
+  left: auto !important;
+}
         }
       `}</style>
     </div>
