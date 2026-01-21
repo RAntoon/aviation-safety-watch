@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import type { LatLngExpression } from "leaflet";
 import "leaflet/dist/leaflet.css";
 import * as RL from "react-leaflet";
@@ -191,7 +191,7 @@ const counts = useMemo(() => {
     return { fatal, accident, incident, occurrence, total: filteredPoints.length };
   }, [points, filteredPoints]);
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     setStatus("Loading…");
     try {
@@ -230,12 +230,11 @@ const counts = useMemo(() => {
     } finally {
       setLoading(false);
     }
-  }
+  }, [start, end]);
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [load]);
 
   return (
     <div style={{ height: "100vh", width: "100vw", position: "relative" }}>
@@ -362,12 +361,11 @@ const counts = useMemo(() => {
         <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
           <button
             onClick={() => {
-              const end = new Date();
-              const start = new Date(end);
-              start.setDate(end.getDate() - 7);
-              setStart(isoDate(start));
-              setEnd(isoDate(end));
-              setTimeout(() => load(), 0);
+              const endDate = new Date();
+              const startDate = new Date(endDate);
+              startDate.setDate(endDate.getDate() - 7);
+              setStart(isoDate(startDate));
+              setEnd(isoDate(endDate));
             }}
             disabled={loading}
             style={{
@@ -385,12 +383,11 @@ const counts = useMemo(() => {
 
           <button
             onClick={() => {
-              const end = new Date();
-              const start = new Date(end);
-              start.setMonth(end.getMonth() - 1);
-              setStart(isoDate(start));
-              setEnd(isoDate(end));
-              setTimeout(() => load(), 0);
+              const endDate = new Date();
+              const startDate = new Date(endDate);
+              startDate.setMonth(endDate.getMonth() - 1);
+              setStart(isoDate(startDate));
+              setEnd(isoDate(endDate));
             }}
             disabled={loading}
             style={{
@@ -408,12 +405,11 @@ const counts = useMemo(() => {
 
           <button
             onClick={() => {
-              const end = new Date();
-              const start = new Date(end);
-              start.setFullYear(end.getFullYear() - 1);
-              setStart(isoDate(start));
-              setEnd(isoDate(end));
-              setTimeout(() => load(), 0);
+              const endDate = new Date();
+              const startDate = new Date(endDate);
+              startDate.setFullYear(endDate.getFullYear() - 1);
+              setStart(isoDate(startDate));
+              setEnd(isoDate(endDate));
             }}
             disabled={loading}
             style={{
