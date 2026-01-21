@@ -294,124 +294,7 @@ const counts = useMemo(() => {
   }, [allTimeMode, load, loadAllTime]);
 
   // Render markers - all individual (no clustering)
-  const renderMarkers = () => {
-    return filteredPoints.map((p) => {
-      // Build title: "Accident/Incident [Tail Number] - [Aircraft Type]"
-      const eventTypeLabel = 
-        p.kind === "fatal" ? "Fatal Accident" :
-        p.kind === "accident" ? "Accident" :
-        p.kind === "incident" ? "Incident" : "Occurrence";
-      
-      const tailNumber = p.registrationNumber ? ` ${p.registrationNumber}` : "";
-      const aircraftType = p.aircraftType ? ` - ${p.aircraftType}` : "";
-      const title = `${eventTypeLabel}${tailNumber}${aircraftType}`;
-
-      // Docket link (always available)
-      const docketUrl = p.ntsbCaseId
-        ? `https://data.ntsb.gov/Docket/?NTSBNumber=${encodeURIComponent(String(p.ntsbCaseId).trim())}`
-        : undefined;
-
-      // Accident Report link - direct PDF
-      const reportUrl = p.eventId
-        ? `https://data.ntsb.gov/carol-repgen/api/Aviation/ReportMain/GenerateNewestReport/${p.eventId}/pdf`
-        : undefined;
-
-      return (
-        <CircleMarker
-          key={p.id}
-          center={[p.lat, p.lng]}
-          radius={7}
-          pathOptions={{
-            color: "#333",
-            weight: 1,
-            fillColor: colorFor(p.kind),
-            fillOpacity: 0.9,
-          }}
-        >
-          <Popup autoPan={false} closeOnClick={false}>
-            <div style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" }}>
-              <div style={{ fontWeight: 800, marginBottom: 6 }}>
-                {title}
-              </div>
-
-              <div style={{ fontSize: 13, marginBottom: 6 }}>
-                {p.date ? (
-                  <div>
-                    <b>Date:</b> {p.date}
-                  </div>
-                ) : null}
-                {p.city || p.state || p.country ? (
-                  <div>
-                    <b>Location:</b> {[p.city, p.state, p.country].filter(Boolean).join(", ")}
-                  </div>
-                ) : null}
-                {p.ntsbCaseId ? (
-                  <div>
-                    <b>NTSB Case:</b> {p.ntsbCaseId}
-                  </div>
-                ) : null}
-                {p.fatalCount !== undefined && p.fatalCount > 0 ? (
-                  <div>
-                    <b>Fatalities:</b> {p.fatalCount}
-                  </div>
-                ) : null}
-              </div>
-
-              {p.summary ? (
-                <div style={{ fontSize: 12, opacity: 0.9, marginBottom: 8 }}>
-                  {expandedPopups.has(p.id) 
-                    ? p.summary
-                    : shortNarrative(p.summary, 320)}
-                  {" "}
-                  {shortNarrative(p.summary, 320).endsWith("…") && (
-                    <span
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        setExpandedPopups(prev => {
-                          const next = new Set(prev);
-                          if (next.has(p.id)) {
-                            next.delete(p.id);
-                          } else {
-                            next.add(p.id);
-                          }
-                          return next;
-                        });
-                      }}
-                      style={{
-                        color: "#2563eb",
-                        cursor: "pointer",
-                        fontSize: 12,
-                        fontWeight: 700,
-                        textDecoration: "underline"
-                      }}
-                    >
-                      {expandedPopups.has(p.id) ? "[show less]" : "[...]"}
-                    </span>
-                  )}
-                </div>
-              ) : null}
-
-              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                {reportUrl ? (
-                  <a href={reportUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>
-                    Investigation →
-                  </a>
-                ) : null}
-
-                {docketUrl ? (
-                  <a href={docketUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>
-                    Docket →
-                  </a>
-                ) : null}
-              </div>
-            </div>
-          </Popup>
-        </CircleMarker>
-      );
-    });
-  };
-
+  
   return (
     <div style={{ height: "100vh", width: "100vw", position: "relative" }}>
       <ClockWidget />
@@ -838,7 +721,161 @@ const counts = useMemo(() => {
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
-        {renderMarkers()}
+        {allTimeMode ? (
+          <MarkerClusterGroup>
+            {filteredPoints.map((p) => {
+              const eventTypeLabel = 
+                p.kind === "fatal" ? "Fatal Accident" :
+                p.kind === "accident" ? "Accident" :
+                p.kind === "incident" ? "Incident" : "Occurrence";
+              
+              const tailNumber = p.registrationNumber ? ` ${p.registrationNumber}` : "";
+              const aircraftType = p.aircraftType ? ` - ${p.aircraftType}` : "";
+              const title = `${eventTypeLabel}${tailNumber}${aircraftType}`;
+
+              const docketUrl = p.ntsbCaseId
+                ? `https://data.ntsb.gov/Docket/?NTSBNumber=${encodeURIComponent(String(p.ntsbCaseId).trim())}`
+                : undefined;
+
+              const reportUrl = p.eventId
+                ? `https://data.ntsb.gov/carol-repgen/api/Aviation/ReportMain/GenerateNewestReport/${p.eventId}/pdf`
+                : undefined;
+
+              return (
+                <CircleMarker
+                  key={p.id}
+                  center={[p.lat, p.lng]}
+                  radius={7}
+                  pathOptions={{
+                    color: "#333",
+                    weight: 1,
+                    fillColor: colorFor(p.kind),
+                    fillOpacity: 0.9,
+                  }}
+                >
+                  <Popup autoPan={false} closeOnClick={false}>
+                    <div style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" }}>
+                      <div style={{ fontWeight: 800, marginBottom: 6 }}>{title}</div>
+                      <div style={{ fontSize: 13, marginBottom: 6 }}>
+                        {p.date ? <div><b>Date:</b> {p.date}</div> : null}
+                        {p.city || p.state || p.country ? (
+                          <div><b>Location:</b> {[p.city, p.state, p.country].filter(Boolean).join(", ")}</div>
+                        ) : null}
+                        {p.ntsbCaseId ? <div><b>NTSB Case:</b> {p.ntsbCaseId}</div> : null}
+                        {p.fatalCount !== undefined && p.fatalCount > 0 ? (
+                          <div><b>Fatalities:</b> {p.fatalCount}</div>
+                        ) : null}
+                      </div>
+                      {p.summary ? (
+                        <div style={{ fontSize: 12, opacity: 0.9, marginBottom: 8 }}>
+                          {expandedPopups.has(p.id) ? p.summary : shortNarrative(p.summary, 320)}
+                          {" "}
+                          {shortNarrative(p.summary, 320).endsWith("…") && (
+                            <span
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setExpandedPopups(prev => {
+                                  const next = new Set(prev);
+                                  if (next.has(p.id)) next.delete(p.id);
+                                  else next.add(p.id);
+                                  return next;
+                                });
+                              }}
+                              style={{ color: "#2563eb", cursor: "pointer", fontSize: 12, fontWeight: 700, textDecoration: "underline" }}
+                            >
+                              {expandedPopups.has(p.id) ? "[show less]" : "[...]"}
+                            </span>
+                          )}
+                        </div>
+                      ) : null}
+                      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                        {reportUrl ? <a href={reportUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>Investigation →</a> : null}
+                        {docketUrl ? <a href={docketUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>Docket →</a> : null}
+                      </div>
+                    </div>
+                  </Popup>
+                </CircleMarker>
+              );
+            })}
+          </MarkerClusterGroup>
+        ) : (
+          filteredPoints.map((p) => {
+            const eventTypeLabel = 
+              p.kind === "fatal" ? "Fatal Accident" :
+              p.kind === "accident" ? "Accident" :
+              p.kind === "incident" ? "Incident" : "Occurrence";
+            
+            const tailNumber = p.registrationNumber ? ` ${p.registrationNumber}` : "";
+            const aircraftType = p.aircraftType ? ` - ${p.aircraftType}` : "";
+            const title = `${eventTypeLabel}${tailNumber}${aircraftType}`;
+
+            const docketUrl = p.ntsbCaseId
+              ? `https://data.ntsb.gov/Docket/?NTSBNumber=${encodeURIComponent(String(p.ntsbCaseId).trim())}`
+              : undefined;
+
+            const reportUrl = p.eventId
+              ? `https://data.ntsb.gov/carol-repgen/api/Aviation/ReportMain/GenerateNewestReport/${p.eventId}/pdf`
+              : undefined;
+
+            return (
+              <CircleMarker
+                key={p.id}
+                center={[p.lat, p.lng]}
+                radius={7}
+                pathOptions={{
+                  color: "#333",
+                  weight: 1,
+                  fillColor: colorFor(p.kind),
+                  fillOpacity: 0.9,
+                }}
+              >
+                <Popup autoPan={false} closeOnClick={false}>
+                  <div style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" }}>
+                    <div style={{ fontWeight: 800, marginBottom: 6 }}>{title}</div>
+                    <div style={{ fontSize: 13, marginBottom: 6 }}>
+                      {p.date ? <div><b>Date:</b> {p.date}</div> : null}
+                      {p.city || p.state || p.country ? (
+                        <div><b>Location:</b> {[p.city, p.state, p.country].filter(Boolean).join(", ")}</div>
+                      ) : null}
+                      {p.ntsbCaseId ? <div><b>NTSB Case:</b> {p.ntsbCaseId}</div> : null}
+                      {p.fatalCount !== undefined && p.fatalCount > 0 ? (
+                        <div><b>Fatalities:</b> {p.fatalCount}</div>
+                      ) : null}
+                    </div>
+                    {p.summary ? (
+                      <div style={{ fontSize: 12, opacity: 0.9, marginBottom: 8 }}>
+                        {expandedPopups.has(p.id) ? p.summary : shortNarrative(p.summary, 320)}
+                        {" "}
+                        {shortNarrative(p.summary, 320).endsWith("…") && (
+                          <span
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setExpandedPopups(prev => {
+                                const next = new Set(prev);
+                                if (next.has(p.id)) next.delete(p.id);
+                                else next.add(p.id);
+                                return next;
+                              });
+                            }}
+                            style={{ color: "#2563eb", cursor: "pointer", fontSize: 12, fontWeight: 700, textDecoration: "underline" }}
+                          >
+                            {expandedPopups.has(p.id) ? "[show less]" : "[...]"}
+                          </span>
+                        )}
+                      </div>
+                    ) : null}
+                    <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                      {reportUrl ? <a href={reportUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>Investigation →</a> : null}
+                      {docketUrl ? <a href={docketUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>Docket →</a> : null}
+                    </div>
+                  </div>
+                </Popup>
+              </CircleMarker>
+            );
+          })
+        )}
       </MapContainer>
 
       {/* Mobile styles */}
