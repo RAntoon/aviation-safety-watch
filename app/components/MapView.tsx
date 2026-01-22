@@ -3,10 +3,7 @@
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import type { LatLngExpression } from "leaflet";
 import "leaflet/dist/leaflet.css";
-import "leaflet.markercluster/dist/MarkerCluster.css";
-import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 import * as RL from "react-leaflet";
-import MarkerClusterGroup from "react-leaflet-markercluster";
 import ClockWidget from "./ClockWidget";
 import ContactModal from "./ContactModal";
 
@@ -149,9 +146,6 @@ export default function MapView() {
   
   // Contact modal state
   const [showContactModal, setShowContactModal] = useState<boolean>(false);
-  
-  // All Time clustering mode
-  const [allTimeMode, setAllTimeMode] = useState<boolean>(false);
 
   const center: LatLngExpression = useMemo(() => [39.5, -98.35], []); // US-centered default
 
@@ -237,67 +231,11 @@ const counts = useMemo(() => {
       setLoading(false);
     }
   }, [start, end]);
-  
-  // Load all time data for clustering mode
-  const loadAllTime = useCallback(async () => {
-    setLoading(true);
-    setStatus("Loading all accidents…");
-    try {
-      // No date filters - load everything
-      const url = `/api/accidents`;
-      const res = await fetch(url, { cache: "no-store" });
-
-      const text = await res.text();
-      let json: any = null;
-      try {
-        json = JSON.parse(text);
-      } catch {
-        // leave null
-      }
-
-      if (!res.ok) {
-        const upstream = json?.error || json?.message || text?.slice(0, 300);
-        setPoints([]);
-        setStatus(`Accidents fetch not OK (${res.status}). ${String(upstream || "").slice(0, 140)}`);
-        console.error("API /api/accidents error:", { status: res.status, upstream });
-        return;
-      }
-
-      const rawPoints: MapPoint[] = Array.isArray(json?.points) ? json.points : [];
-
-      // Don't spread overlaps in clustering mode - clusters handle it
-      setPoints(rawPoints);
-
-      setStatus(`OK. Loaded ${rawPoints.length} points (All Time mode)`);
-    } catch (e: any) {
-      setPoints([]);
-      setStatus(`Fetch failed (network/runtime). See console.`);
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  
-  // Handle All Time mode toggle
-  const toggleAllTime = useCallback(() => {
-    if (!allTimeMode) {
-      // Switching TO All Time mode
-      setAllTimeMode(true);
-      loadAllTime();
-    } else {
-      // Switching FROM All Time mode back to normal
-      setAllTimeMode(false);
-      load();
-    }
-  }, [allTimeMode, load, loadAllTime]);
+  }, [load]);
 
-  // Render markers - all individual (no clustering)
-  
   return (
     <div style={{ height: "100vh", width: "100vw", position: "relative" }}>
       <ClockWidget />
@@ -363,23 +301,20 @@ const counts = useMemo(() => {
           Data source: NTSB exports · Default range: last 12 months
         </div>
 
-        {/* Date inputs - disabled in All Time mode */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 10, opacity: allTimeMode ? 0.5 : 1 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 10 }}>
           <div>
             <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Start</div>
             <input
               type="date"
               value={start}
               onChange={(e) => setStart(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && !allTimeMode && load()}
-              disabled={allTimeMode}
+              onKeyDown={(e) => e.key === "Enter" && load()}
               style={{ 
                 width: "100%", 
                 padding: 8, 
                 borderRadius: 8, 
                 border: "1px solid #ddd",
-                boxSizing: "border-box",
-                cursor: allTimeMode ? "not-allowed" : "text"
+                boxSizing: "border-box"
               }}
             />
           </div>
@@ -389,15 +324,13 @@ const counts = useMemo(() => {
               type="date"
               value={end}
               onChange={(e) => setEnd(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && !allTimeMode && load()}
-              disabled={allTimeMode}
+              onKeyDown={(e) => e.key === "Enter" && load()}
               style={{ 
                 width: "100%", 
                 padding: 8, 
                 borderRadius: 8, 
                 border: "1px solid #ddd",
-                boxSizing: "border-box",
-                cursor: allTimeMode ? "not-allowed" : "text"
+                boxSizing: "border-box"
               }}
             />
           </div>
@@ -406,13 +339,13 @@ const counts = useMemo(() => {
         <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10 }}>
           <button
             onClick={load}
-            disabled={loading || allTimeMode}
+            disabled={loading}
             style={{
               padding: "8px 12px",
               borderRadius: 10,
               border: "1px solid #ddd",
-              background: (loading || allTimeMode) ? "#f4f4f4" : "#fff",
-              cursor: (loading || allTimeMode) ? "not-allowed" : "pointer",
+              background: loading ? "#f4f4f4" : "#fff",
+              cursor: loading ? "not-allowed" : "pointer",
               fontWeight: 700,
             }}
           >
@@ -433,15 +366,13 @@ const counts = useMemo(() => {
               startDate.setDate(endDate.getDate() - 7);
               setStart(isoDate(startDate));
               setEnd(isoDate(endDate));
-              setAllTimeMode(false);
-              setTimeout(() => load(), 10);
             }}
             disabled={loading}
             style={{
               padding: "6px 10px",
               borderRadius: 8,
               border: "1px solid #ddd",
-              background: loading ? "#f4f4f4" : (!allTimeMode ? "#fff" : "#f9f9f9"),
+              background: loading ? "#f4f4f4" : "#fff",
               cursor: loading ? "not-allowed" : "pointer",
               fontSize: 12,
               fontWeight: 600,
@@ -457,15 +388,13 @@ const counts = useMemo(() => {
               startDate.setMonth(endDate.getMonth() - 1);
               setStart(isoDate(startDate));
               setEnd(isoDate(endDate));
-              setAllTimeMode(false);
-              setTimeout(() => load(), 10);
             }}
             disabled={loading}
             style={{
               padding: "6px 10px",
               borderRadius: 8,
               border: "1px solid #ddd",
-              background: loading ? "#f4f4f4" : (!allTimeMode ? "#fff" : "#f9f9f9"),
+              background: loading ? "#f4f4f4" : "#fff",
               cursor: loading ? "not-allowed" : "pointer",
               fontSize: 12,
               fontWeight: 600,
@@ -481,39 +410,19 @@ const counts = useMemo(() => {
               startDate.setFullYear(endDate.getFullYear() - 1);
               setStart(isoDate(startDate));
               setEnd(isoDate(endDate));
-              setAllTimeMode(false);
-              setTimeout(() => load(), 10);
             }}
             disabled={loading}
             style={{
               padding: "6px 10px",
               borderRadius: 8,
               border: "1px solid #ddd",
-              background: loading ? "#f4f4f4" : (!allTimeMode ? "#fff" : "#f9f9f9"),
+              background: loading ? "#f4f4f4" : "#fff",
               cursor: loading ? "not-allowed" : "pointer",
               fontSize: 12,
               fontWeight: 600,
             }}
           >
             Last Year
-          </button>
-          
-          {/* All Time button - depressable/highlighted when active */}
-          <button
-            onClick={toggleAllTime}
-            disabled={loading}
-            style={{
-              padding: "6px 10px",
-              borderRadius: 8,
-              border: allTimeMode ? "2px solid #1976d2" : "1px solid #ddd",
-              background: loading ? "#f4f4f4" : (allTimeMode ? "#e3f2fd" : "#fff"),
-              cursor: loading ? "not-allowed" : "pointer",
-              fontSize: 12,
-              fontWeight: 600,
-              color: allTimeMode ? "#1976d2" : "#000",
-            }}
-          >
-            {allTimeMode ? "✓ All Time" : "All Time"}
           </button>
         </div>
 
@@ -724,161 +633,121 @@ const counts = useMemo(() => {
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
-        {allTimeMode ? (
-          <MarkerClusterGroup>
-            {filteredPoints.map((p) => {
-              const eventTypeLabel = 
-                p.kind === "fatal" ? "Fatal Accident" :
-                p.kind === "accident" ? "Accident" :
-                p.kind === "incident" ? "Incident" : "Occurrence";
-              
-              const tailNumber = p.registrationNumber ? ` ${p.registrationNumber}` : "";
-              const aircraftType = p.aircraftType ? ` - ${p.aircraftType}` : "";
-              const title = `${eventTypeLabel}${tailNumber}${aircraftType}`;
+        {filteredPoints.map((p) => {
+          // Build title: "Accident/Incident [Tail Number] - [Aircraft Type]"
+          const eventTypeLabel = 
+            p.kind === "fatal" ? "Fatal Accident" :
+            p.kind === "accident" ? "Accident" :
+            p.kind === "incident" ? "Incident" : "Occurrence";
+          
+          const tailNumber = p.registrationNumber ? ` ${p.registrationNumber}` : "";
+          const aircraftType = p.aircraftType ? ` - ${p.aircraftType}` : "";
+          const title = `${eventTypeLabel}${tailNumber}${aircraftType}`;
 
-              const docketUrl = p.ntsbCaseId
-                ? `https://data.ntsb.gov/Docket/?NTSBNumber=${encodeURIComponent(String(p.ntsbCaseId).trim())}`
-                : undefined;
+          // Docket link (always available)
+          const docketUrl = p.ntsbCaseId
+            ? `https://data.ntsb.gov/Docket/?NTSBNumber=${encodeURIComponent(String(p.ntsbCaseId).trim())}`
+            : undefined;
 
-              const reportUrl = p.eventId
-                ? `https://data.ntsb.gov/carol-repgen/api/Aviation/ReportMain/GenerateNewestReport/${p.eventId}/pdf`
-                : undefined;
+          // Accident Report link - direct PDF
+          const reportUrl = p.eventId
+            ? `https://data.ntsb.gov/carol-repgen/api/Aviation/ReportMain/GenerateNewestReport/${p.eventId}/pdf`
+            : undefined;
 
-              return (
-                <CircleMarker
-                  key={p.id}
-                  center={[p.lat, p.lng]}
-                  radius={7}
-                  pathOptions={{
-                    color: "#333",
-                    weight: 1,
-                    fillColor: colorFor(p.kind),
-                    fillOpacity: 0.9,
-                  }}
-                >
-                  <Popup autoPan={false} closeOnClick={false}>
-                    <div style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" }}>
-                      <div style={{ fontWeight: 800, marginBottom: 6 }}>{title}</div>
-                      <div style={{ fontSize: 13, marginBottom: 6 }}>
-                        {p.date ? <div><b>Date:</b> {p.date}</div> : null}
-                        {p.city || p.state || p.country ? (
-                          <div><b>Location:</b> {[p.city, p.state, p.country].filter(Boolean).join(", ")}</div>
-                        ) : null}
-                        {p.ntsbCaseId ? <div><b>NTSB Case:</b> {p.ntsbCaseId}</div> : null}
-                        {p.fatalCount !== undefined && p.fatalCount > 0 ? (
-                          <div><b>Fatalities:</b> {p.fatalCount}</div>
-                        ) : null}
-                      </div>
-                      {p.summary ? (
-                        <div style={{ fontSize: 12, opacity: 0.9, marginBottom: 8 }}>
-                          {expandedPopups.has(p.id) ? p.summary : shortNarrative(p.summary, 320)}
-                          {" "}
-                          {shortNarrative(p.summary, 320).endsWith("…") && (
-                            <span
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                setExpandedPopups(prev => {
-                                  const next = new Set(prev);
-                                  if (next.has(p.id)) next.delete(p.id);
-                                  else next.add(p.id);
-                                  return next;
-                                });
-                              }}
-                              style={{ color: "#2563eb", cursor: "pointer", fontSize: 12, fontWeight: 700, textDecoration: "underline" }}
-                            >
-                              {expandedPopups.has(p.id) ? "[show less]" : "[...]"}
-                            </span>
-                          )}
-                        </div>
-                      ) : null}
-                      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                        {reportUrl ? <a href={reportUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>Investigation →</a> : null}
-                        {docketUrl ? <a href={docketUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>Docket →</a> : null}
-                      </div>
-                    </div>
-                  </Popup>
-                </CircleMarker>
-              );
-            })}
-          </MarkerClusterGroup>
-        ) : (
-          filteredPoints.map((p) => {
-            const eventTypeLabel = 
-              p.kind === "fatal" ? "Fatal Accident" :
-              p.kind === "accident" ? "Accident" :
-              p.kind === "incident" ? "Incident" : "Occurrence";
-            
-            const tailNumber = p.registrationNumber ? ` ${p.registrationNumber}` : "";
-            const aircraftType = p.aircraftType ? ` - ${p.aircraftType}` : "";
-            const title = `${eventTypeLabel}${tailNumber}${aircraftType}`;
+          return (
+            <CircleMarker
+              key={p.id}
+              center={[p.lat, p.lng]}
+              radius={7}
+              pathOptions={{
+                color: "#333",
+                weight: 1,
+                fillColor: colorFor(p.kind),
+                fillOpacity: 0.9,
+              }}
+            >
+              <Popup autoPan={false} closeOnClick={false}>
+                <div style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" }}>
+                  <div style={{ fontWeight: 800, marginBottom: 6 }}>
+                    {title}
+                  </div>
 
-            const docketUrl = p.ntsbCaseId
-              ? `https://data.ntsb.gov/Docket/?NTSBNumber=${encodeURIComponent(String(p.ntsbCaseId).trim())}`
-              : undefined;
-
-            const reportUrl = p.eventId
-              ? `https://data.ntsb.gov/carol-repgen/api/Aviation/ReportMain/GenerateNewestReport/${p.eventId}/pdf`
-              : undefined;
-
-            return (
-              <CircleMarker
-                key={p.id}
-                center={[p.lat, p.lng]}
-                radius={7}
-                pathOptions={{
-                  color: "#333",
-                  weight: 1,
-                  fillColor: colorFor(p.kind),
-                  fillOpacity: 0.9,
-                }}
-              >
-                <Popup autoPan={false} closeOnClick={false}>
-                  <div style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" }}>
-                    <div style={{ fontWeight: 800, marginBottom: 6 }}>{title}</div>
-                    <div style={{ fontSize: 13, marginBottom: 6 }}>
-                      {p.date ? <div><b>Date:</b> {p.date}</div> : null}
-                      {p.city || p.state || p.country ? (
-                        <div><b>Location:</b> {[p.city, p.state, p.country].filter(Boolean).join(", ")}</div>
-                      ) : null}
-                      {p.ntsbCaseId ? <div><b>NTSB Case:</b> {p.ntsbCaseId}</div> : null}
-                      {p.fatalCount !== undefined && p.fatalCount > 0 ? (
-                        <div><b>Fatalities:</b> {p.fatalCount}</div>
-                      ) : null}
-                    </div>
-                    {p.summary ? (
-                      <div style={{ fontSize: 12, opacity: 0.9, marginBottom: 8 }}>
-                        {expandedPopups.has(p.id) ? p.summary : shortNarrative(p.summary, 320)}
-                        {" "}
-                        {shortNarrative(p.summary, 320).endsWith("…") && (
-                          <span
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              setExpandedPopups(prev => {
-                                const next = new Set(prev);
-                                if (next.has(p.id)) next.delete(p.id);
-                                else next.add(p.id);
-                                return next;
-                              });
-                            }}
-                            style={{ color: "#2563eb", cursor: "pointer", fontSize: 12, fontWeight: 700, textDecoration: "underline" }}
-                          >
-                            {expandedPopups.has(p.id) ? "[show less]" : "[...]"}
-                          </span>
-                        )}
+                  <div style={{ fontSize: 13, marginBottom: 6 }}>
+                    {p.date ? (
+                      <div>
+                        <b>Date:</b> {p.date}
                       </div>
                     ) : null}
-                    <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                      {reportUrl ? <a href={reportUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>Investigation →</a> : null}
-                      {docketUrl ? <a href={docketUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>Docket →</a> : null}
-                    </div>
+                    {p.city || p.state || p.country ? (
+                      <div>
+                        <b>Location:</b> {[p.city, p.state, p.country].filter(Boolean).join(", ")}
+                      </div>
+                    ) : null}
+                    {p.ntsbCaseId ? (
+                      <div>
+                        <b>NTSB Case:</b> {p.ntsbCaseId}
+                      </div>
+                    ) : null}
+                    {p.fatalCount !== undefined && p.fatalCount > 0 ? (
+                      <div>
+                        <b>Fatalities:</b> {p.fatalCount}
+                      </div>
+                    ) : null}
                   </div>
-                </Popup>
-              </CircleMarker>
-            );
-          })
-        )}
+
+                  {p.summary ? (
+                    <div style={{ fontSize: 12, opacity: 0.9, marginBottom: 8 }}>
+                      {expandedPopups.has(p.id) 
+                        ? p.summary
+                        : shortNarrative(p.summary, 320)}
+                      {" "}
+                      {shortNarrative(p.summary, 320).endsWith("…") && (
+                        <span
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setExpandedPopups(prev => {
+                              const next = new Set(prev);
+                              if (next.has(p.id)) {
+                                next.delete(p.id);
+                              } else {
+                                next.add(p.id);
+                              }
+                              return next;
+                            });
+                          }}
+                          style={{
+                            color: "#2563eb",
+                            cursor: "pointer",
+                            fontSize: 12,
+                            fontWeight: 700,
+                            textDecoration: "underline"
+                          }}
+                        >
+                          {expandedPopups.has(p.id) ? "[show less]" : "[...]"}
+                        </span>
+                      )}
+                    </div>
+                  ) : null}
+
+                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                    {reportUrl ? (
+                      <a href={reportUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>
+                        Investigation →
+                      </a>
+                    ) : null}
+
+                    {docketUrl ? (
+                      <a href={docketUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>
+                        Docket →
+                      </a>
+                    ) : null}
+                  </div>
+                </div>
+              </Popup>
+            </CircleMarker>
+          );
+        })}
       </MapContainer>
 
       {/* Mobile styles */}
