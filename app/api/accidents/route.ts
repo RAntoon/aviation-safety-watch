@@ -101,7 +101,7 @@ export async function GET(req: Request) {
 
     // Limit results to prevent overwhelming the client
     // You can adjust this or add pagination later
-    query += ` LIMIT 50000`;
+    query += ` LIMIT 20000`;
 
     // Execute query
     const result = await pool.query(query, params);

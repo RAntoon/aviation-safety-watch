@@ -146,9 +146,6 @@ export default function MapView() {
   
   // Contact modal state
   const [showContactModal, setShowContactModal] = useState<boolean>(false);
-  
-  // All Time mode
-  const [allTimeMode, setAllTimeMode] = useState<boolean>(false);
 
   const center: LatLngExpression = useMemo(() => [39.5, -98.35], []); // US-centered default
 
@@ -221,8 +218,8 @@ const counts = useMemo(() => {
 
       const rawPoints: MapPoint[] = Array.isArray(json?.points) ? json.points : [];
 
-      // ✅ Spread overlaps (same airport / same coords) - only in normal mode
-      const spread = allTimeMode ? rawPoints : spreadOverlaps(rawPoints);
+      // ✅ Spread overlaps (same airport / same coords)
+      const spread = spreadOverlaps(rawPoints);
 
       setPoints(spread);
 
@@ -235,66 +232,8 @@ const counts = useMemo(() => {
     } finally {
       setLoading(false);
     }
-  }, [start, end, allTimeMode]);
+  }, [start, end]);
   
-  // Load all time data
-  const loadAllTime = useCallback(async () => {
-    setLoading(true);
-    setStatus("Loading all accidents…");
-    try {
-      // No date filters - load everything
-      const url = `/api/accidents`;
-      const res = await fetch(url, { cache: "no-store" });
-
-      const text = await res.text();
-      let json: any = null;
-      try {
-        json = JSON.parse(text);
-      } catch {
-        // leave null
-      }
-
-      if (!res.ok) {
-        const upstream = json?.error || json?.message || text?.slice(0, 300);
-        setPoints([]);
-        setStatus(`Accidents fetch not OK (${res.status}). ${String(upstream || "").slice(0, 140)}`);
-        console.error("API /api/accidents error:", { status: res.status, upstream });
-        return;
-      }
-
-      const rawPoints: MapPoint[] = Array.isArray(json?.points) ? json.points : [];
-
-      // Don't spread overlaps in all time mode
-      setPoints(rawPoints);
-
-      setStatus(`OK. Loaded ${rawPoints.length} points (All Time mode)`);
-    } catch (e: any) {
-      setPoints([]);
-      setStatus(`Fetch failed (network/runtime). See console.`);
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  
-  // Handle All Time mode toggle
-  const toggleAllTime = useCallback(() => {
-    if (!allTimeMode) {
-      // Switching TO All Time mode
-      setAllTimeMode(true);
-      loadAllTime();
-    } else {
-      // Switching FROM All Time mode back to normal
-      setAllTimeMode(false);
-      load();
-    }
-  }, [allTimeMode, load, loadAllTime]);
-
   return (
     <div style={{ height: "100vh", width: "100vw", position: "relative" }}>
       <ClockWidget />
@@ -360,23 +299,21 @@ const counts = useMemo(() => {
           Data source: NTSB exports · Default range: last 12 months
         </div>
 
-        {/* Date inputs - disabled in All Time mode */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 10, opacity: allTimeMode ? 0.5 : 1 }}>
+        {/* Date inputs */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 10 }}>
           <div>
             <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Start</div>
             <input
               type="date"
               value={start}
               onChange={(e) => setStart(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && !allTimeMode && load()}
-              disabled={allTimeMode}
+              onKeyDown={(e) => e.key === "Enter" && load()}
               style={{ 
                 width: "100%", 
                 padding: 8, 
                 borderRadius: 8, 
                 border: "1px solid #ddd",
-                boxSizing: "border-box",
-                cursor: allTimeMode ? "not-allowed" : "text"
+                boxSizing: "border-box"
               }}
             />
           </div>
@@ -386,15 +323,13 @@ const counts = useMemo(() => {
               type="date"
               value={end}
               onChange={(e) => setEnd(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && !allTimeMode && load()}
-              disabled={allTimeMode}
+              onKeyDown={(e) => e.key === "Enter" && load()}
               style={{ 
                 width: "100%", 
                 padding: 8, 
                 borderRadius: 8, 
                 border: "1px solid #ddd",
-                boxSizing: "border-box",
-                cursor: allTimeMode ? "not-allowed" : "text"
+                boxSizing: "border-box"
               }}
             />
           </div>
@@ -403,13 +338,13 @@ const counts = useMemo(() => {
         <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10 }}>
           <button
             onClick={() => load()}
-            disabled={loading || allTimeMode}
+            disabled={loading}
             style={{
               padding: "8px 12px",
               borderRadius: 10,
               border: "1px solid #ddd",
-              background: (loading || allTimeMode) ? "#f4f4f4" : "#fff",
-              cursor: (loading || allTimeMode) ? "not-allowed" : "pointer",
+              background: loading ? "#f4f4f4" : "#fff",
+              cursor: loading ? "not-allowed" : "pointer",
               fontWeight: 700,
             }}
           >
@@ -432,7 +367,6 @@ const counts = useMemo(() => {
               const endStr = isoDate(endDate);
               setStart(startStr);
               setEnd(endStr);
-              setAllTimeMode(false);
               load(startStr, endStr);
             }}
             disabled={loading}
@@ -458,7 +392,6 @@ const counts = useMemo(() => {
               const endStr = isoDate(endDate);
               setStart(startStr);
               setEnd(endStr);
-              setAllTimeMode(false);
               load(startStr, endStr);
             }}
             disabled={loading}
@@ -484,7 +417,6 @@ const counts = useMemo(() => {
               const endStr = isoDate(endDate);
               setStart(startStr);
               setEnd(endStr);
-              setAllTimeMode(false);
               load(startStr, endStr);
             }}
             disabled={loading}
@@ -499,24 +431,6 @@ const counts = useMemo(() => {
             }}
           >
             Last Year
-          </button>
-          
-          {/* All Time button - depressable/highlighted when active */}
-          <button
-            onClick={toggleAllTime}
-            disabled={loading}
-            style={{
-              padding: "6px 10px",
-              borderRadius: 8,
-              border: allTimeMode ? "2px solid #1976d2" : "1px solid #ddd",
-              background: loading ? "#f4f4f4" : (allTimeMode ? "#e3f2fd" : "#fff"),
-              cursor: loading ? "not-allowed" : "pointer",
-              fontSize: 12,
-              fontWeight: 600,
-              color: allTimeMode ? "#1976d2" : "#000",
-            }}
-          >
-            {allTimeMode ? "✓ All Time" : "All Time"}
           </button>
         </div>
 
