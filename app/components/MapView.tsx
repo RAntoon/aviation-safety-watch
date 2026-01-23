@@ -30,6 +30,7 @@ type MapPoint = {
   docketUrl?: string;
   ntsbCaseId?: string;
   eventId?: string;
+  reportUrl?: string;
 
   summary?: string;
   aircraftType?: string;
@@ -234,7 +235,8 @@ const counts = useMemo(() => {
 
   useEffect(() => {
     load();
-  }, [load]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div style={{ height: "100vh", width: "100vw", position: "relative" }}>
@@ -366,6 +368,8 @@ const counts = useMemo(() => {
               startDate.setDate(endDate.getDate() - 7);
               setStart(isoDate(startDate));
               setEnd(isoDate(endDate));
+              // Wait for state to update, then load
+              setTimeout(() => load(), 10);
             }}
             disabled={loading}
             style={{
@@ -388,6 +392,8 @@ const counts = useMemo(() => {
               startDate.setMonth(endDate.getMonth() - 1);
               setStart(isoDate(startDate));
               setEnd(isoDate(endDate));
+              // Wait for state to update, then load
+              setTimeout(() => load(), 10);
             }}
             disabled={loading}
             style={{
@@ -410,6 +416,8 @@ const counts = useMemo(() => {
               startDate.setFullYear(endDate.getFullYear() - 1);
               setStart(isoDate(startDate));
               setEnd(isoDate(endDate));
+              // Wait for state to update, then load
+              setTimeout(() => load(), 10);
             }}
             disabled={loading}
             style={{
@@ -649,10 +657,12 @@ const counts = useMemo(() => {
             ? `https://data.ntsb.gov/Docket/?NTSBNumber=${encodeURIComponent(String(p.ntsbCaseId).trim())}`
             : undefined;
 
-          // Accident Report link - direct PDF
-          const reportUrl = p.eventId
-            ? `https://data.ntsb.gov/carol-repgen/api/Aviation/ReportMain/GenerateNewestReport/${p.eventId}/pdf`
-            : undefined;
+          // Accident Report link - use custom URL if available, otherwise construct from eventId
+          const reportUrl = p.reportUrl 
+            ? p.reportUrl  // Use custom URL from database (for shuttle accidents, etc.)
+            : p.eventId 
+              ? `https://data.ntsb.gov/carol-repgen/api/Aviation/ReportMain/GenerateNewestReport/${p.eventId}/pdf`
+              : undefined;
 
           return (
             <CircleMarker

@@ -70,6 +70,7 @@ export async function GET(req: Request) {
         aircraft_make,
         aircraft_model,
         registration_number,
+        report_url,
         COALESCE(prelim_narrative, factual_narrative, analysis_narrative) as summary
       FROM accidents
       WHERE latitude IS NOT NULL 
@@ -109,7 +110,6 @@ export async function GET(req: Request) {
     // Transform results into the format expected by MapView
     const points = result.rows.map((row) => {
       // Determine kind based on fatal count and event type
-      // Determine kind based on fatal count and event type
       let kind: "fatal" | "accident" | "incident" | "occurrence" = "incident";
       if (row.fatal_count > 0 || row.highest_injury?.toLowerCase() === "fatal") {
         kind = "fatal";
@@ -130,6 +130,7 @@ export async function GET(req: Request) {
         country: row.country || undefined,
         ntsbCaseId: row.ntsb_number || undefined,
         eventId: row.event_id || undefined,
+        reportUrl: row.report_url || undefined,
         aircraftType: [row.aircraft_make, row.aircraft_model]
           .filter(Boolean)
           .join(" ") || undefined,
