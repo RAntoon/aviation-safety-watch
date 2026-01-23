@@ -138,6 +138,7 @@ export default function MapView() {
   const [isPanelOpen, setIsPanelOpen] = useState(true);
   const [expandedPopups, setExpandedPopups] = useState<Set<string>>(new Set());
   const [searchTerm, setSearchTerm] = useState<string>("");
+  const [searchAllTime, setSearchAllTime] = useState<boolean>(false);
   
   // Toggle filters for accident types (all enabled by default)
   const [showFatal, setShowFatal] = useState<boolean>(true);
@@ -196,7 +197,11 @@ const counts = useMemo(() => {
     setLoading(true);
     setStatus("Loading…");
     try {
-      const url = `/api/accidents?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
+      // If searchAllTime is true, don't send date parameters
+      const url = searchAllTime 
+        ? `/api/accidents`
+        : `/api/accidents?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
+      
       const res = await fetch(url, { cache: "no-store" });
 
       const text = await res.text();
@@ -231,12 +236,18 @@ const counts = useMemo(() => {
     } finally {
       setLoading(false);
     }
-  }, [start, end]);
+  }, [start, end, searchAllTime]);
 
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Reload when searchAllTime changes
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchAllTime]);
 
   return (
     <div style={{ height: "100vh", width: "100vw", position: "relative" }}>
@@ -310,13 +321,15 @@ const counts = useMemo(() => {
               type="date"
               value={start}
               onChange={(e) => setStart(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && load()}
+              disabled={searchAllTime}
               style={{ 
                 width: "100%", 
                 padding: 8, 
                 borderRadius: 8, 
                 border: "1px solid #ddd",
-                boxSizing: "border-box"
+                boxSizing: "border-box",
+                opacity: searchAllTime ? 0.5 : 1,
+                cursor: searchAllTime ? "not-allowed" : "default"
               }}
             />
           </div>
@@ -326,13 +339,15 @@ const counts = useMemo(() => {
               type="date"
               value={end}
               onChange={(e) => setEnd(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && load()}
+              disabled={searchAllTime}
               style={{ 
                 width: "100%", 
                 padding: 8, 
                 borderRadius: 8, 
                 border: "1px solid #ddd",
-                boxSizing: "border-box"
+                boxSizing: "border-box",
+                opacity: searchAllTime ? 0.5 : 1,
+                cursor: searchAllTime ? "not-allowed" : "default"
               }}
             />
           </div>
@@ -363,13 +378,28 @@ const counts = useMemo(() => {
         <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
           <button
             onClick={() => {
+              setSearchAllTime(false);
               const endDate = new Date();
               const startDate = new Date(endDate);
               startDate.setDate(endDate.getDate() - 7);
-              setStart(isoDate(startDate));
-              setEnd(isoDate(endDate));
-              // Wait for state to update, then load
-              setTimeout(() => load(), 10);
+              const newStart = isoDate(startDate);
+              const newEnd = isoDate(endDate);
+              setStart(newStart);
+              setEnd(newEnd);
+              // Force immediate load with new dates
+              (async () => {
+                const url = `/api/accidents?start=${encodeURIComponent(newStart)}&end=${encodeURIComponent(newEnd)}`;
+                setLoading(true);
+                setStatus("Loading…");
+                const res = await fetch(url, { cache: "no-store" });
+                const json = await res.json();
+                if (res.ok && json.points) {
+                  const spread = spreadOverlaps(json.points);
+                  setPoints(spread);
+                  setStatus(`OK. Loaded ${spread.length} points.`);
+                }
+                setLoading(false);
+              })();
             }}
             disabled={loading}
             style={{
@@ -387,13 +417,28 @@ const counts = useMemo(() => {
 
           <button
             onClick={() => {
+              setSearchAllTime(false);
               const endDate = new Date();
               const startDate = new Date(endDate);
               startDate.setMonth(endDate.getMonth() - 1);
-              setStart(isoDate(startDate));
-              setEnd(isoDate(endDate));
-              // Wait for state to update, then load
-              setTimeout(() => load(), 10);
+              const newStart = isoDate(startDate);
+              const newEnd = isoDate(endDate);
+              setStart(newStart);
+              setEnd(newEnd);
+              // Force immediate load with new dates
+              (async () => {
+                const url = `/api/accidents?start=${encodeURIComponent(newStart)}&end=${encodeURIComponent(newEnd)}`;
+                setLoading(true);
+                setStatus("Loading…");
+                const res = await fetch(url, { cache: "no-store" });
+                const json = await res.json();
+                if (res.ok && json.points) {
+                  const spread = spreadOverlaps(json.points);
+                  setPoints(spread);
+                  setStatus(`OK. Loaded ${spread.length} points.`);
+                }
+                setLoading(false);
+              })();
             }}
             disabled={loading}
             style={{
@@ -411,13 +456,28 @@ const counts = useMemo(() => {
 
           <button
             onClick={() => {
+              setSearchAllTime(false);
               const endDate = new Date();
               const startDate = new Date(endDate);
               startDate.setFullYear(endDate.getFullYear() - 1);
-              setStart(isoDate(startDate));
-              setEnd(isoDate(endDate));
-              // Wait for state to update, then load
-              setTimeout(() => load(), 10);
+              const newStart = isoDate(startDate);
+              const newEnd = isoDate(endDate);
+              setStart(newStart);
+              setEnd(newEnd);
+              // Force immediate load with new dates
+              (async () => {
+                const url = `/api/accidents?start=${encodeURIComponent(newStart)}&end=${encodeURIComponent(newEnd)}`;
+                setLoading(true);
+                setStatus("Loading…");
+                const res = await fetch(url, { cache: "no-store" });
+                const json = await res.json();
+                if (res.ok && json.points) {
+                  const spread = spreadOverlaps(json.points);
+                  setPoints(spread);
+                  setStatus(`OK. Loaded ${spread.length} points.`);
+                }
+                setLoading(false);
+              })();
             }}
             disabled={loading}
             style={{
@@ -434,9 +494,36 @@ const counts = useMemo(() => {
           </button>
         </div>
 
+        {/* Search All Time checkbox - moved above search box */}
+        {points.length > 0 && (
+          <div style={{ marginTop: 10, marginBottom: 6 }}>
+            <label style={{ 
+              display: "flex", 
+              alignItems: "center", 
+              gap: 8, 
+              fontSize: 13,
+              cursor: "pointer",
+              fontWeight: 600
+            }}>
+              <input
+                type="checkbox"
+                checked={searchAllTime}
+                onChange={(e) => setSearchAllTime(e.target.checked)}
+                style={{ cursor: "pointer" }}
+              />
+              Search all time (ignore date range)
+            </label>
+            {searchAllTime && (
+              <div style={{ fontSize: 11, marginTop: 4, opacity: 0.7, marginLeft: 24 }}>
+                Loading all 178,000+ accidents...
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Search box - same as Data View */}
         {points.length > 0 && (
-          <div style={{ marginTop: 10 }}>
+          <div style={{ marginTop: 4 }}>
             <input
               type="text"
               placeholder="Search by NTSB#, location, aircraft..."
@@ -704,41 +791,6 @@ const counts = useMemo(() => {
                       </div>
                     ) : null}
                   </div>
-
-                  {p.summary ? (
-                    <div style={{ fontSize: 12, opacity: 0.9, marginBottom: 8 }}>
-                      {expandedPopups.has(p.id) 
-                        ? p.summary
-                        : shortNarrative(p.summary, 320)}
-                      {" "}
-                      {shortNarrative(p.summary, 320).endsWith("…") && (
-                        <span
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            setExpandedPopups(prev => {
-                              const next = new Set(prev);
-                              if (next.has(p.id)) {
-                                next.delete(p.id);
-                              } else {
-                                next.add(p.id);
-                              }
-                              return next;
-                            });
-                          }}
-                          style={{
-                            color: "#2563eb",
-                            cursor: "pointer",
-                            fontSize: 12,
-                            fontWeight: 700,
-                            textDecoration: "underline"
-                          }}
-                        >
-                          {expandedPopups.has(p.id) ? "[show less]" : "[...]"}
-                        </span>
-                      )}
-                    </div>
-                  ) : null}
 
                   <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                     {reportUrl ? (

@@ -4,25 +4,31 @@ import { Pool } from "pg";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Create database connection pool
+// Create a single shared pool that persists across requests
+let pool: Pool | null = null;
+
 function getPool() {
-  const connectionString = 
-    process.env.DATABASE_URL || 
-    process.env.POSTGRES_URL;
+  if (!pool) {
+    const connectionString = 
+      process.env.DATABASE_URL || 
+      process.env.POSTGRES_URL;
 
-  if (!connectionString) {
-    throw new Error("DATABASE_URL not found in environment variables");
+    if (!connectionString) {
+      throw new Error("DATABASE_URL not found in environment variables");
+    }
+
+    pool = new Pool({
+      connectionString,
+      ssl: {
+        rejectUnauthorized: false
+      },
+      max: 20,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 2000,
+    });
   }
-
-  return new Pool({
-    connectionString,
-    ssl: {
-      rejectUnauthorized: false
-    },
-    max: 20, // Maximum number of clients in the pool
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 2000,
-  });
+  
+  return pool;
 }
 
 export async function GET(req: Request) {
@@ -52,7 +58,7 @@ export async function GET(req: Request) {
   const pool = getPool();
 
   try {
-    // Build the SQL query
+    // Build the SQL query - REMOVED summary to dramatically improve performance
     let query = `
       SELECT 
         id,
@@ -70,8 +76,7 @@ export async function GET(req: Request) {
         aircraft_make,
         aircraft_model,
         registration_number,
-        report_url,
-        COALESCE(prelim_narrative, factual_narrative, analysis_narrative) as summary
+        report_url
       FROM accidents
       WHERE latitude IS NOT NULL 
         AND longitude IS NOT NULL
@@ -100,9 +105,11 @@ export async function GET(req: Request) {
     // Order by date (most recent first)
     query += ` ORDER BY event_date DESC`;
 
-    // Limit results to prevent overwhelming the client
-    // You can adjust this or add pagination later
-    query += ` LIMIT 20000`;
+    // Limit results only when date filtering is used
+    // When searching all time, return everything (178k+ accidents)
+    if (startDate || endDate) {
+      query += ` LIMIT 20000`;
+    }
 
     // Execute query
     const result = await pool.query(query, params);
@@ -134,15 +141,15 @@ export async function GET(req: Request) {
         aircraftType: [row.aircraft_make, row.aircraft_model]
           .filter(Boolean)
           .join(" ") || undefined,
-        summary: row.summary || undefined,
         registrationNumber: row.registration_number || undefined,
         fatalCount: row.fatal_count || 0,
+        // summary removed - will be lazy-loaded if needed
       };
     });
 
     // Count stats for response
     const totalRows = result.rows.length;
-    const rowsWithCoords = totalRows; // All results have coords due to WHERE clause
+    const rowsWithCoords = totalRows;
     const rowsInRange = totalRows;
 
     return NextResponse.json({
@@ -170,8 +177,6 @@ export async function GET(req: Request) {
       },
       { status: 500 }
     );
-  } finally {
-    // Close the pool
-    await pool.end();
   }
+  // DON'T close the pool - reuse it for next request
 }
