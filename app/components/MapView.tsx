@@ -152,11 +152,13 @@ export default function MapView() {
   const center: LatLngExpression = useMemo(() => [39.5, -98.35], []); // US-centered default
 
   // Filter points based on search term and type toggles
+  // CLIENT-SIDE filtering (used when NOT in "search all time" mode)
   const filteredPoints = useMemo(() => {
     let filtered = points;
     
-    // Filter by search term
-    if (searchTerm) {
+    // Only apply client-side search filter if NOT in "search all time" mode
+    // (In "search all time" mode, server does the searching)
+    if (searchTerm && !searchAllTime) {
       const search = searchTerm.toLowerCase();
       filtered = filtered.filter((p) => 
         p.ntsbCaseId?.toLowerCase().includes(search) ||
@@ -177,9 +179,9 @@ export default function MapView() {
     });
     
     return filtered;
-  }, [points, searchTerm, showFatal, showAccident, showIncident, showOccurrence]);
+  }, [points, searchTerm, searchAllTime, showFatal, showAccident, showIncident, showOccurrence]);
 
-const counts = useMemo(() => {
+  const counts = useMemo(() => {
     let fatal = 0,
       accident = 0,
       incident = 0,
@@ -197,10 +199,19 @@ const counts = useMemo(() => {
     setLoading(true);
     setStatus("Loading…");
     try {
-      // If searchAllTime is true, don't send date parameters
-      const url = searchAllTime 
-        ? `/api/accidents`
-        : `/api/accidents?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
+      // Build URL based on mode
+      let url: string;
+      
+      if (searchAllTime) {
+        // SERVER-SIDE search: send search term to API
+        url = `/api/accidents`;
+        if (searchTerm && searchTerm.trim().length > 0) {
+          url += `?search=${encodeURIComponent(searchTerm.trim())}`;
+        }
+      } else {
+        // CLIENT-SIDE search: fetch by date, filter in browser
+        url = `/api/accidents?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
+      }
       
       const res = await fetch(url, { cache: "no-store" });
 
@@ -236,18 +247,36 @@ const counts = useMemo(() => {
     } finally {
       setLoading(false);
     }
-  }, [start, end, searchAllTime]);
+  }, [start, end, searchAllTime, searchTerm]);
 
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Reload when searchAllTime changes
+  // Reload when searchAllTime changes - but only if unchecking (going back to date mode)
   useEffect(() => {
-    load();
+    if (!searchAllTime) {
+      // User unchecked "search all time" - reload with date filters
+      load();
+    }
+    // When checking "search all time", do nothing - wait for user to type
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchAllTime]);
+
+  // SERVER-SIDE search with debouncing (only in "search all time" mode)
+  useEffect(() => {
+    if (!searchAllTime) return; // Only debounce in "search all time" mode
+    if (!searchTerm || searchTerm.trim().length === 0) return; // Don't search if empty
+
+    // Debounce: wait 500ms after user stops typing
+    const timeoutId = setTimeout(() => {
+      load();
+    }, 500);
+
+    return () => clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchTerm, searchAllTime]);
 
   return (
     <div style={{ height: "100vh", width: "100vw", position: "relative" }}>
@@ -511,22 +540,22 @@ const counts = useMemo(() => {
                 onChange={(e) => setSearchAllTime(e.target.checked)}
                 style={{ cursor: "pointer" }}
               />
-              Search all time (ignore date range)
+              Search all time (server-side search)
             </label>
             {searchAllTime && (
               <div style={{ fontSize: 11, marginTop: 4, opacity: 0.7, marginLeft: 24 }}>
-                Loading all 178,000+ accidents...
+                Type to search 178,000+ accidents instantly
               </div>
             )}
           </div>
         )}
 
-        {/* Search box - same as Data View */}
+        {/* Search box */}
         {points.length > 0 && (
           <div style={{ marginTop: 4 }}>
             <input
               type="text"
-              placeholder="Search by NTSB#, location, aircraft..."
+              placeholder={searchAllTime ? "Type to search all accidents..." : "Search by NTSB#, location, aircraft..."}
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               style={{
@@ -540,7 +569,10 @@ const counts = useMemo(() => {
             />
             {searchTerm && (
               <div style={{ fontSize: 12, marginTop: 4, opacity: 0.7 }}>
-                Showing {counts.total} of {points.length} events
+                {searchAllTime 
+                  ? `Found ${counts.total} matching events`
+                  : `Showing ${counts.total} of ${points.length} events`
+                }
               </div>
             )}
           </div>

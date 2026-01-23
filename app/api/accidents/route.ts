@@ -35,6 +35,7 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const startStr = searchParams.get("start");
   const endStr = searchParams.get("end");
+  const searchTerm = searchParams.get("search"); // NEW: Get search parameter
 
   // Parse date parameters
   const startDate = startStr ? new Date(startStr) : null;
@@ -102,14 +103,33 @@ export async function GET(req: Request) {
       paramIndex++;
     }
 
+    // NEW: Add search filter if provided (server-side search for "all time" mode)
+    if (searchTerm && searchTerm.trim().length > 0) {
+      const searchPattern = `%${searchTerm.trim().toLowerCase()}%`;
+      query += ` AND (
+        LOWER(ntsb_number) LIKE $${paramIndex} OR
+        LOWER(city) LIKE $${paramIndex} OR
+        LOWER(state) LIKE $${paramIndex} OR
+        LOWER(aircraft_make) LIKE $${paramIndex} OR
+        LOWER(aircraft_model) LIKE $${paramIndex} OR
+        LOWER(registration_number) LIKE $${paramIndex}
+      )`;
+      params.push(searchPattern);
+      paramIndex++;
+    }
+
     // Order by date (most recent first)
     query += ` ORDER BY event_date DESC`;
 
-    // Limit results only when date filtering is used
-    // When searching all time, return everything (178k+ accidents)
-    if (startDate || endDate) {
+    // Limit results only when date filtering is used AND no search term
+    // When searching all time with a search term, return unlimited results (but likely small result set)
+    if ((startDate || endDate) && !searchTerm) {
+      query += ` LIMIT 20000`;
+    } else if (!searchTerm) {
+      // "Search all time" without search term - still limit to prevent browser crash
       query += ` LIMIT 20000`;
     }
+    // If there IS a search term, no limit (search results are naturally limited)
 
     // Execute query
     const result = await pool.query(query, params);
@@ -143,7 +163,6 @@ export async function GET(req: Request) {
           .join(" ") || undefined,
         registrationNumber: row.registration_number || undefined,
         fatalCount: row.fatal_count || 0,
-        // summary removed - will be lazy-loaded if needed
       };
     });
 
@@ -162,6 +181,7 @@ export async function GET(req: Request) {
         useDatabase: true,
         startDate: startStr,
         endDate: endStr,
+        searchTerm: searchTerm || null,
         queryExecuted: true,
       },
     });
@@ -178,5 +198,4 @@ export async function GET(req: Request) {
       { status: 500 }
     );
   }
-  // DON'T close the pool - reuse it for next request
 }
