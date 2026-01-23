@@ -523,60 +523,56 @@ export default function MapView() {
           </button>
         </div>
 
-        {/* Search All Time checkbox - moved above search box */}
-        {points.length > 0 && (
-          <div style={{ marginTop: 10, marginBottom: 6 }}>
-            <label style={{ 
-              display: "flex", 
-              alignItems: "center", 
-              gap: 8, 
-              fontSize: 13,
-              cursor: "pointer",
-              fontWeight: 600
-            }}>
-              <input
-                type="checkbox"
-                checked={searchAllTime}
-                onChange={(e) => setSearchAllTime(e.target.checked)}
-                style={{ cursor: "pointer" }}
-              />
-              Search all time (server-side search)
-            </label>
-            {searchAllTime && (
-              <div style={{ fontSize: 11, marginTop: 4, opacity: 0.7, marginLeft: 24 }}>
-                Type to search 178,000+ accidents instantly
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Search box */}
-        {points.length > 0 && (
-          <div style={{ marginTop: 4 }}>
+        {/* Search All Time checkbox - ALWAYS VISIBLE */}
+        <div style={{ marginTop: 10, marginBottom: 6 }}>
+          <label style={{ 
+            display: "flex", 
+            alignItems: "center", 
+            gap: 8, 
+            fontSize: 13,
+            cursor: "pointer",
+            fontWeight: 600
+          }}>
             <input
-              type="text"
-              placeholder={searchAllTime ? "Type to search all accidents..." : "Search by NTSB#, location, aircraft..."}
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              style={{
-                width: "100%",
-                padding: "8px 12px",
-                borderRadius: 8,
-                border: "1px solid #ddd",
-                fontSize: 13,
-                boxSizing: "border-box",
-              }}
+              type="checkbox"
+              checked={searchAllTime}
+              onChange={(e) => setSearchAllTime(e.target.checked)}
+              style={{ cursor: "pointer" }}
             />
-            {searchTerm && (
-              <div style={{ fontSize: 12, marginTop: 4, opacity: 0.7 }}>
-                {searchAllTime 
-                  ? `Found ${counts.total} matching events`
-                  : `Showing ${counts.total} of ${points.length} events`
-                }
-              </div>
-            )}
-          </div>
-        )}
+            Search all time (server-side search)
+          </label>
+          {searchAllTime && (
+            <div style={{ fontSize: 11, marginTop: 4, opacity: 0.7, marginLeft: 24 }}>
+              Type to search 178,000+ accidents instantly
+            </div>
+          )}
+        </div>
+
+        {/* Search box - ALWAYS VISIBLE */}
+        <div style={{ marginTop: 4 }}>
+          <input
+            type="text"
+            placeholder={searchAllTime ? "Type to search all accidents..." : "Search by NTSB#, location, aircraft..."}
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            style={{
+              width: "100%",
+              padding: "8px 12px",
+              borderRadius: 8,
+              border: "1px solid #ddd",
+              fontSize: 13,
+              boxSizing: "border-box",
+            }}
+          />
+          {searchTerm && (
+            <div style={{ fontSize: 12, marginTop: 4, opacity: 0.7 }}>
+              {searchAllTime 
+                ? `Found ${counts.total} matching events`
+                : `Showing ${counts.total} of ${points.length} events`
+              }
+            </div>
+          )}
+        </div>
 
         <div style={{ marginTop: 12 }}>
           <div style={{ fontWeight: 800, marginBottom: 6 }}>Legend (click to filter)</div>

@@ -134,6 +134,23 @@ export async function GET(req: Request) {
     // Execute query
     const result = await pool.query(query, params);
 
+    // Handle empty results gracefully
+    if (!result || !result.rows) {
+      return NextResponse.json({
+        ok: true,
+        totalRows: 0,
+        rowsWithCoords: 0,
+        rowsInRange: 0,
+        points: [],
+        debug: {
+          useDatabase: true,
+          startDate: startStr,
+          endDate: endStr,
+          searchTerm: searchTerm || null,
+          queryExecuted: true,
+        },
+      });
+    }
     // Transform results into the format expected by MapView
     const points = result.rows.map((row) => {
       // Determine kind based on fatal count and event type
