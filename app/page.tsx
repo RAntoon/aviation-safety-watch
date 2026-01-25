@@ -41,11 +41,11 @@ export default function HomePage() {
   const [showDisclaimer, setShowDisclaimer] = useState(true);
 
   useEffect(() => {
-   if (typeof window !== "undefined") {
-    const dismissed = localStorage.getItem("disclaimerDismissed") === "true";
-    setShowDisclaimer(!dismissed);
-  }
-}, []);
+    if (typeof window !== "undefined") {
+      const dismissed = localStorage.getItem("disclaimerDismissed") === "true";
+      setShowDisclaimer(!dismissed);
+    }
+  }, []);
 
   const defaultRange = useMemo(() => last12MonthsRange(), []);
   const [startDate] = useState<string>(isoDate(defaultRange.start));
@@ -125,3 +125,58 @@ export default function HomePage() {
           background: "white",
           borderRadius: 10,
           boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+          overflow: "hidden",
+          fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
+        }}
+      >
+        <button
+          onClick={() => setView("map")}
+          style={{
+            padding: "12px 24px",
+            border: "none",
+            background: view === "map" ? "#1976d2" : "white",
+            color: view === "map" ? "white" : "#333",
+            cursor: "pointer",
+            fontWeight: 700,
+            fontSize: 14,
+            transition: "all 0.2s",
+          }}
+        >
+          Map View
+        </button>
+        <button
+          onClick={() => setView("data")}
+          style={{
+            padding: "12px 24px",
+            border: "none",
+            borderLeft: "1px solid #ddd",
+            background: view === "data" ? "#1976d2" : "white",
+            color: view === "data" ? "white" : "#333",
+            cursor: "pointer",
+            fontWeight: 700,
+            fontSize: 14,
+            transition: "all 0.2s",
+          }}
+        >
+          Data View
+        </button>
+      </div>
+
+      {view === "map" ? <MapView /> : <DataView startDate={startDate} endDate={endDate} />}
+      
+      <style jsx global>{`
+        @media (max-width: 768px) {
+          .view-toggle {
+            top: auto !important;
+            bottom: 40px !important;
+          }
+          
+          .view-toggle button {
+            padding: 8px 16px !important;
+            font-size: 12px !important;
+          }
+        }
+      `}</style>
+    </>
+  );
+}
