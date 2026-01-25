@@ -88,8 +88,7 @@ export default function HomePage() {
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <span style={{ fontSize: 20 }}>⚠️</span>
               <div style={{ fontSize: 14, lineHeight: 1.5 }}>
-                <strong>Beta Notice:</strong> This site displays aviation accidents with verified coordinates 1962-2026 (
-                <strong>178,183 total records</strong>). Records without location data are geocoded to the accident report location or estimated crash site.
+                <strong>Beta Notice:</strong> This site displays aviation accidents with verified coordinates 1962-2026. Records without location data are geocoded to the accident report location or estimated crash site.
               </div>
             </div>
             <button
