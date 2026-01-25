@@ -77,7 +77,8 @@ export async function GET(req: Request) {
         aircraft_make,
         aircraft_model,
         registration_number,
-        report_url
+        report_url,
+        location_estimated
       FROM accidents
       WHERE latitude IS NOT NULL 
         AND longitude IS NOT NULL
@@ -175,6 +176,7 @@ export async function GET(req: Request) {
         ntsbCaseId: row.ntsb_number || undefined,
         eventId: row.event_id || undefined,
         reportUrl: row.report_url || undefined,
+        locationEstimated: row.location_estimated || false,
         aircraftType: [row.aircraft_make, row.aircraft_model]
           .filter(Boolean)
           .join(" ") || undefined,

@@ -31,6 +31,7 @@ type MapPoint = {
   ntsbCaseId?: string;
   eventId?: string;
   reportUrl?: string;
+  locationEstimated?: boolean;
 
   summary?: string;
   aircraftType?: string;
@@ -793,6 +794,22 @@ export default function MapView() {
             >
               <Popup autoPan={false} closeOnClick={false}>
                 <div style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" }}>
+                  {/* Estimated Location Warning */}
+                  {p.locationEstimated && (
+                    <div style={{ 
+                      fontSize: 12, 
+                      color: "#856404", 
+                      background: "#fff3cd",
+                      padding: "6px 8px",
+                      borderRadius: 6,
+                      marginBottom: 8,
+                      fontWeight: 600,
+                      border: "1px solid #ffc107"
+                    }}>
+                      ⚠️ Estimated location (missing aircraft or offshore site)
+                    </div>
+                  )}
+
                   <div style={{ fontWeight: 800, marginBottom: 6 }}>
                     {title}
                   </div>
