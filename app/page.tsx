@@ -89,8 +89,7 @@ export default function HomePage() {
               <span style={{ fontSize: 20 }}>⚠️</span>
               <div style={{ fontSize: 14, lineHeight: 1.5 }}>
                 <strong>Beta Notice:</strong> This site displays aviation accidents with verified coordinates (
-                <strong>173,884 of 178,183 total records - 97.6% mapped</strong>). Records without location data are viewable in
-                Data View. We are actively geocoding remaining historical records back to 1962.
+                <strong>173,884 of 178,183 total records - 97.6% mapped</strong>). Records without coordinates geocoded to the accident report location. We are actively geocoding remaining historical records back to 1962.
               </div>
             </div>
             <button
