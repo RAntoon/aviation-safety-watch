@@ -52,14 +52,14 @@ function sleep(ms) {
 }
 
 async function geocodeBatch() {
-  console.log('🌍 Starting geocoding batch: 1982-2026 records without coordinates\n');
+  console.log('🌍 Starting geocoding batch: 1962-2026 records without coordinates\n');
   
-  // Get records without coordinates from 1982 onwards
+  // Get records without coordinates from 1962 onwards
   const result = await pool.query(`
     SELECT id, ntsb_number, city, state, country
     FROM accidents
     WHERE latitude IS NULL
-      AND event_date >= '1982-01-01'
+      AND event_date >= '1962-01-01'
       AND (city IS NOT NULL OR state IS NOT NULL OR country IS NOT NULL)
     ORDER BY event_date DESC
     LIMIT 5000
