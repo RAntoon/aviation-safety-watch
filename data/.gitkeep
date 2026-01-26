@@ -1,5 +1,0 @@
-mkdir data
-touch data/.gitkeep
-git add data/.gitkeep
-git commit -m "Create data directory"
-git push

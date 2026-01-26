@@ -35,7 +35,7 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const startStr = searchParams.get("start");
   const endStr = searchParams.get("end");
-  const searchTerm = searchParams.get("search"); // NEW: Get search parameter
+  const searchTerm = searchParams.get("search");
 
   // Parse date parameters
   const startDate = startStr ? new Date(startStr) : null;
@@ -59,7 +59,7 @@ export async function GET(req: Request) {
   const pool = getPool();
 
   try {
-    // Build the SQL query - REMOVED summary to dramatically improve performance
+    // Build the SQL query
     let query = `
       SELECT 
         id,
@@ -104,33 +104,52 @@ export async function GET(req: Request) {
       paramIndex++;
     }
 
-    // NEW: Add search filter if provided (server-side search for "all time" mode)
+    // Multi-word search with probable_cause and operator_name
     if (searchTerm && searchTerm.trim().length > 0) {
-      const searchPattern = `%${searchTerm.trim().toLowerCase()}%`;
-      query += ` AND (
-        LOWER(ntsb_number) LIKE $${paramIndex} OR
-        LOWER(city) LIKE $${paramIndex} OR
-        LOWER(state) LIKE $${paramIndex} OR
-        LOWER(aircraft_make) LIKE $${paramIndex} OR
-        LOWER(aircraft_model) LIKE $${paramIndex} OR
-        LOWER(registration_number) LIKE $${paramIndex}
-      )`;
-      params.push(searchPattern);
-      paramIndex++;
+      // Sanitize and split into words
+      const sanitized = searchTerm
+        .trim()
+        .toLowerCase()
+        .replace(/[%_\\]/g, '\\$&')  // Escape SQL wildcards
+        .replace(/\s+/g, ' ');        // Normalize whitespace
+      
+      const words = sanitized.split(' ').filter(w => w.length > 0);
+      
+      if (words.length > 0) {
+        // Build AND condition for each word
+        const wordConditions = words.map(() => {
+          const condition = `(
+            LOWER(ntsb_number) LIKE $${paramIndex} OR
+            LOWER(city) LIKE $${paramIndex} OR
+            LOWER(state) LIKE $${paramIndex} OR
+            LOWER(aircraft_make) LIKE $${paramIndex} OR
+            LOWER(aircraft_model) LIKE $${paramIndex} OR
+            LOWER(registration_number) LIKE $${paramIndex} OR
+            LOWER(operator_name) LIKE $${paramIndex} OR
+            LOWER(probable_cause) LIKE $${paramIndex}
+          )`;
+          paramIndex++;
+          return condition;
+        });
+        
+        query += ` AND (${wordConditions.join(' AND ')})`;
+        
+        // Add each word as a parameter with wildcards
+        words.forEach(word => {
+          params.push(`%${word}%`);
+        });
+      }
     }
 
     // Order by date (most recent first)
     query += ` ORDER BY event_date DESC`;
 
     // Limit results only when date filtering is used AND no search term
-    // When searching all time with a search term, return unlimited results (but likely small result set)
     if ((startDate || endDate) && !searchTerm) {
       query += ` LIMIT 20000`;
     } else if (!searchTerm) {
-      // "Search all time" without search term - still limit to prevent browser crash
       query += ` LIMIT 20000`;
     }
-    // If there IS a search term, no limit (search results are naturally limited)
 
     // Execute query
     const result = await pool.query(query, params);
@@ -152,6 +171,7 @@ export async function GET(req: Request) {
         },
       });
     }
+
     // Transform results into the format expected by MapView
     const points = result.rows.map((row) => {
       // Determine kind based on fatal count and event type
