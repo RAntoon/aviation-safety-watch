@@ -12,6 +12,14 @@ export const metadata = {
     url: "https://aviationsafetywatch.com",
     siteName: "Aviation Safety Watch",
     type: "website",
+    images: [
+      {
+        url: '/og-image.png',
+        width: 1200,
+        height: 630,
+        alt: 'Aviation Safety Watch - Interactive Aviation Accident Map',
+      },
+    ],
   },
   robots: {
     index: true,
