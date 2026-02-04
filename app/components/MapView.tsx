@@ -886,12 +886,12 @@ export default function MapView() {
 
         .leaflet-control-attribution {
           position: fixed !important;
-          bottom: 30px !important;
+          bottom: 0px !important;
           left: 12px !important;
           right: auto !important;
           top: auto !important;
           font-size: 10px !important;
-          background: rgba(255, 255, 255, 0.8) !important;
+          background: rgba(255, 255, 255, 0) !important;
           padding: 3px 6px !important;
           border-radius: 4px !important;
           box-shadow: 0 2px 4px rgba(0,0,0,0.1) !important;
