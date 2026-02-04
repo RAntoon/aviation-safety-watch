@@ -753,7 +753,7 @@ export default function MapView() {
         <ZoomControl position="bottomright" />
 
         <TileLayer
-          attribution="&copy; OpenStreetMap contributors"
+          attribution='Map data &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
@@ -882,6 +882,30 @@ export default function MapView() {
           .clock-widget {
             display: none !important;
           }
+        }
+
+        .leaflet-control-attribution {
+          position: fixed !important;
+          bottom: 30px !important;
+          left: 12px !important;
+          right: auto !important;
+          top: auto !important;
+          font-size: 10px !important;
+          background: rgba(255, 255, 255, 0.8) !important;
+          padding: 3px 6px !important;
+          border-radius: 4px !important;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.1) !important;
+          margin: 0 !important;
+          transform: none !important;
+        }
+
+        .leaflet-control-attribution a {
+          color: #333 !important;
+          text-decoration: none !important;
+        }
+
+        .leaflet-control-attribution a:hover {
+          text-decoration: underline !important;
         }
       `}</style>
     </div>
