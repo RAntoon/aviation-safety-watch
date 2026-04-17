@@ -315,6 +315,43 @@ export default function MapView() {
         Contact Us
       </button>
 
+      {/* About Button */}
+      <a
+        href="/about"
+        className="about-button"
+        style={{
+          position: "absolute",
+          zIndex: 1000,
+          top: 210,
+          right: 12,
+          padding: "10px 16px",
+          borderRadius: 10,
+          border: "1px solid #ddd",
+          background: "rgba(255,255,255,0.95)",
+          boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+          fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
+          fontWeight: 700,
+          fontSize: 14,
+          cursor: "pointer",
+          transition: "all 0.2s ease",
+          textDecoration: "none",
+          color: "#333",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = "white";
+          e.currentTarget.style.boxShadow = "0 6px 16px rgba(0,0,0,0.2)";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = "rgba(255,255,255,0.95)";
+          e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.15)";
+        }}
+      >
+        About
+      </a>
+
       <ContactModal 
         isOpen={showContactModal} 
         onClose={() => setShowContactModal(false)} 
