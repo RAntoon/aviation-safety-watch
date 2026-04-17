@@ -60,9 +60,8 @@ export default function HowToUsePage() {
           <p style={{ fontSize: 16, color: "#666", marginBottom: 40 }}>
             A comprehensive guide to searching and understanding NTSB aviation accident data
           </p>
-
-        {/* Getting Started */}
-        <section style={{ marginBottom: 40 }}>
+          {/* Getting Started */}
+          <section style={{ marginBottom: 40 }}>
           <h2 style={{ fontSize: 28, fontWeight: 700, marginBottom: 20, color: "#333" }}>
             Getting Started
           </h2>
