@@ -120,14 +120,6 @@ export default function HowToUsePage() {
           </div>
 
           <div style={{ marginBottom: 24 }}>
-            <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 8, color: "#1976d2" }}>
-              How often is the data updated?
-            </h3>
-            <p style={{ fontSize: 16, lineHeight: 1.8, color: "#555" }}>
-              Our database syncs with the NTSB every day at 2:00 AM UTC, automatically importing any new accidents or updates to existing records. This means you're typically seeing data that's less than 24 hours old.
-            </p>
-          </div>
-
           <div style={{ marginBottom: 24 }}>
             <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 8, color: "#1976d2" }}>
               How far back does the data go?
@@ -157,14 +149,6 @@ export default function HowToUsePage() {
 
           <div style={{ marginBottom: 24 }}>
             <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 8, color: "#1976d2" }}>
-              Can I download the data?
-            </h3>
-            <p style={{ fontSize: 16, lineHeight: 1.8, color: "#555" }}>
-              Currently, Aviation Safety Watch is focused on providing an interactive map interface for exploring accident data. For bulk data downloads, we recommend visiting the official NTSB website at <a href="https://data.ntsb.gov" target="_blank" rel="noopener noreferrer" style={{ color: "#1976d2", textDecoration: "none" }}>data.ntsb.gov</a>.
-            </p>
-          </div>
-
-          <div style={{ marginBottom: 24 }}>
             <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 8, color: "#1976d2" }}>
               Is this an official NTSB website?
             </h3>
