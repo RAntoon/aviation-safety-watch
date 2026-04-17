@@ -22,10 +22,12 @@ export default function HowToUsePage() {
           position: "sticky",
           top: 0,
           zIndex: 100,
-        }}
-      >
         <div style={{ maxWidth: 1200, margin: "0 auto" }}>
-          <h1 style={{ margin: 0, fontSize: 28, fontWeight: 800, color: "#1976d2" }}>
+          <Link href="/" style={{ textDecoration: "none" }}>
+            <h1 style={{ margin: 0, fontSize: 28, fontWeight: 800, color: "#1976d2", cursor: "pointer" }}>
+              Aviation Safety Watch
+            </h1>
+          </Link>
             Aviation Safety Watch
           </h1>
           <div style={{ marginTop: 12, display: "flex", gap: 20 }}>

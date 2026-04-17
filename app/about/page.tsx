@@ -23,9 +23,11 @@ export default function AboutPage() {
         }}
       >
         <div style={{ maxWidth: 1200, margin: "0 auto" }}>
-          <h1 style={{ margin: 0, fontSize: 28, fontWeight: 800, color: "#1976d2" }}>
-            Aviation Safety Watch
-          </h1>
+          <Link href="/" style={{ textDecoration: "none" }}>
+            <h1 style={{ margin: 0, fontSize: 28, fontWeight: 800, color: "#1976d2", cursor: "pointer" }}>
+              Aviation Safety Watch
+            </h1>
+          </Link>
           <div style={{ marginTop: 12, display: "flex", gap: 20 }}>
             <Link href="/" style={{ color: "#333", textDecoration: "none", fontWeight: 600 }}>
               ← Back to Map
