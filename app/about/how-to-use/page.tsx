@@ -244,6 +244,7 @@ export default function HowToUsePage() {
           </p>
         </footer>
       </div>
+      </div>
     </div>
   );
 }
