@@ -30,6 +30,9 @@ export default function AboutPage() {
             <Link href="/" style={{ color: "#1976d2", textDecoration: "none", fontWeight: 600 }}>
               ← Back to Map
             </Link>
+            <Link href="/about/how-to-use" style={{ color: "#666", textDecoration: "none" }}>
+              How to Use & FAQ
+            </Link>
             <Link href="/contact" style={{ color: "#666", textDecoration: "none" }}>
               Contact
             </Link>
