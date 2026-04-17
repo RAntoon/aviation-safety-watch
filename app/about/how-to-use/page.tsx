@@ -1,30 +1,65 @@
+"use client";
+
+import Link from "next/link";
+
 export default function HowToUsePage() {
   return (
-    <div style={{ 
-      minHeight: "100vh", 
-      background: "linear-gradient(to bottom, #e3f2fd, #ffffff)",
-      padding: "40px 20px"
-    }}>
-      <div style={{ 
-        maxWidth: 900, 
-        margin: "0 auto",
-        background: "white",
-        borderRadius: 12,
-        padding: "40px",
-        boxShadow: "0 4px 20px rgba(0,0,0,0.08)"
-      }}>
-        <h1 style={{ 
-          fontSize: 36, 
-          fontWeight: 800, 
-          marginBottom: 10,
-          color: "#1976d2"
-        }}>
-          How to Use Aviation Safety Watch
-        </h1>
-        
-        <p style={{ fontSize: 16, color: "#666", marginBottom: 40 }}>
-          A comprehensive guide to searching and understanding NTSB aviation accident data
-        </p>
+    <div
+      style={{
+        minHeight: "100vh",
+        background: "#f5f5f5",
+        fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
+      }}
+    >
+      {/* Header */}
+      <div
+        style={{
+          background: "white",
+          padding: "20px",
+          boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+          position: "sticky",
+          top: 0,
+          zIndex: 100,
+        }}
+      >
+        <div style={{ maxWidth: 1200, margin: "0 auto" }}>
+          <h1 style={{ margin: 0, fontSize: 28, fontWeight: 800, color: "#1976d2" }}>
+            Aviation Safety Watch
+          </h1>
+          <div style={{ marginTop: 12, display: "flex", gap: 20 }}>
+            <Link href="/" style={{ color: "#1976d2", textDecoration: "none", fontWeight: 600 }}>
+              ← Back to Map
+            </Link>
+            <Link href="/about" style={{ color: "#666", textDecoration: "none" }}>
+              About
+            </Link>
+            <span style={{ color: "#1976d2", fontWeight: 600, borderBottom: "2px solid #1976d2", paddingBottom: 2 }}>
+              How to Use & FAQ
+            </span>
+            <Link href="/contact" style={{ color: "#666", textDecoration: "none" }}>
+              Contact
+            </Link>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Content */}
+      <div style={{ maxWidth: 1200, margin: "40px auto", padding: "0 20px" }}>
+        <div
+          style={{
+            background: "white",
+            borderRadius: 12,
+            boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+            padding: 40,
+          }}
+        >
+          <h1 style={{ fontSize: 36, fontWeight: 800, color: "#333", marginTop: 0, marginBottom: 10 }}>
+            How to Use Aviation Safety Watch
+          </h1>
+          
+          <p style={{ fontSize: 16, color: "#666", marginBottom: 40 }}>
+            A comprehensive guide to searching and understanding NTSB aviation accident data
+          </p>
 
         {/* Getting Started */}
         <section style={{ marginBottom: 40 }}>
