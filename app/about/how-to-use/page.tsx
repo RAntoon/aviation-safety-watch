@@ -148,7 +148,6 @@ export default function HowToUsePage() {
 
           <div style={{ marginBottom: 24 }}>
             <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 8, color: "#1976d2" }}>
-            <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 8, color: "#1976d2" }}>
               Is this an official NTSB website?
             </h3>
             <p style={{ fontSize: 16, lineHeight: 1.8, color: "#555" }}>
