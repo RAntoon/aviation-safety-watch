@@ -27,9 +27,12 @@ export default function AboutPage() {
             Aviation Safety Watch
           </h1>
           <div style={{ marginTop: 12, display: "flex", gap: 20 }}>
-            <Link href="/" style={{ color: "#1976d2", textDecoration: "none", fontWeight: 600 }}>
+            <Link href="/" style={{ color: "#333", textDecoration: "none", fontWeight: 600 }}>
               ← Back to Map
             </Link>
+            <span style={{ color: "#1976d2", fontWeight: 600, borderBottom: "2px solid #1976d2", paddingBottom: 2 }}>
+              About
+            </span>
             <Link href="/about/how-to-use" style={{ color: "#666", textDecoration: "none" }}>
               How to Use & FAQ
             </Link>
