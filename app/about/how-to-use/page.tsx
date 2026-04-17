@@ -29,7 +29,7 @@ export default function HowToUsePage() {
             Aviation Safety Watch
           </h1>
           <div style={{ marginTop: 12, display: "flex", gap: 20 }}>
-            <Link href="/" style={{ color: "#333", textDecoration: "none", fontWeight: 600 }}>
+            <Link href="/" style={{ color: "#1976d2", textDecoration: "none", fontWeight: 600 }}>
               ← Back to Map
             </Link>
             <Link href="/about" style={{ color: "#666", textDecoration: "none" }}>
