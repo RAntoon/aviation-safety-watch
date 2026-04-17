@@ -120,7 +120,6 @@ export default function HowToUsePage() {
           </div>
 
           <div style={{ marginBottom: 24 }}>
-          <div style={{ marginBottom: 24 }}>
             <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 8, color: "#1976d2" }}>
               How far back does the data go?
             </h3>
