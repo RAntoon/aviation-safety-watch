@@ -21,3 +21,6 @@ yarn-error.log*
 .next/
 out/
 dist/
+# manual backups (not for git)
+aviationsafetywatch.zip
+*.before-refactor
