@@ -71,3 +71,21 @@ the Neon `dev` branch connection string.
 - Neon project `aviation-accidents`, branches `main` (prod) + `dev`
 - All DB env vars in Vercel are Neon-integration-managed (green badge) and set
   to All Environments — do not hand-edit them, they get overwritten on sync.
+### Findings added Aug 21 (later in session)
+
+3. Ran `node test-fileexport.js` — result PASSED. The `FileExport` endpoint
+   STILL returns the old `cm_*` format (106 records, 56 with coords). The new
+   PascalCase format in `accidents_update.json` came from a different path
+   (CAROL web UI or developer.ntsb.gov API), NOT this endpoint.
+   => Existing parser is NOT broken. Rewrite is planned, not urgent.
+
+4. CRON ROOT CAUSE FOUND: `app/api/sync-ntsb/route.ts:78` calls `Query/Main`,
+   NOT `Query/FileExport`. `Query/Main` returns thin summaries with no
+   coordinates, so every record gets sent to Nominatim (line 18) at 1 req/sec
+   — guaranteed timeout on Hobby's short function limit.
+   Cron IS scheduled in vercel.json: "0 2 * * *" (2am daily). It has been
+   running nightly and failing quietly this whole time.
+   FIX: point it at `Query/FileExport` with the same POST payload as
+   `test-fileexport.js`, and split ingest from geocoding into separate passes.
+   NOTE: FileExport returns a ZIP — needs JS unzipping, not the macOS `unzip`
+   shell command the test script uses.
